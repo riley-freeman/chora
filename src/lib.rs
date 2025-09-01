@@ -1,5 +1,5 @@
 use std::sync::LazyLock;
-
+use cgmath::Vector3;
 use wgpu::wgt::DeviceDescriptor;
 use wgpu::BackendOptions;
 use wgpu::Backends;
@@ -14,10 +14,13 @@ use wgpu::Device;
 use wgpu::Queue;
 
 use crate::camera::Camera;
+use crate::mesh::Mesh;
+use crate::model::Model;
 
 pub mod error;
 pub mod camera;
-
+pub mod mesh;
+pub mod model;
 
 static INSTANCE :LazyLock<Instance> = LazyLock::new(|| {
     Instance::new(&InstanceDescriptor {
@@ -81,6 +84,23 @@ impl Chora {
             position,
             pitch, yaw, roll,
         )
+    }
+
+    pub fn create_mesh(&self, vertices: &[f32], indices: &[i32]) -> Result<Mesh, error::ChoraError> {
+        Ok(Mesh::new(&self.device, vertices, indices))
+    }
+
+    pub fn create_model(&self, meshes: Vec<Mesh>, mutable: bool,
+               position: &Vector3<f32>, rotation: &Vector3<f32>, scale: &Vector3<f32>)
+    -> Result<Model, error::ChoraError> {
+        Ok(Model::new(
+            &self.device,
+            meshes,
+            mutable,
+            position as *const _ as _,
+            rotation as *const _ as _,
+            scale as *const  _ as _
+        ))
     }
 
 }
