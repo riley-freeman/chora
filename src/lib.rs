@@ -21,6 +21,7 @@ pub mod error;
 pub mod camera;
 pub mod mesh;
 pub mod model;
+mod linked_list;
 
 static INSTANCE :LazyLock<Instance> = LazyLock::new(|| {
     Instance::new(&InstanceDescriptor {
