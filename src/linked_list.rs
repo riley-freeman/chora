@@ -7,6 +7,7 @@ pub struct LinkedList<T> {
     length: usize,
 }
 
+// TODO: Finish implementing LinkedList
 impl <T> LinkedList<T> {
     pub fn new() -> Self {
         LinkedList {
@@ -125,6 +126,10 @@ impl <T> LinkedList<T> {
 
             Some(node.inner)
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.length
     }
 }
 

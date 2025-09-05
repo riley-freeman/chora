@@ -92,8 +92,8 @@ impl Chora {
     }
 
     pub fn create_model(&self, meshes: Vec<Mesh>, mutable: bool,
-               position: &Vector3<f32>, rotation: &Vector3<f32>, scale: &Vector3<f32>)
-    -> Result<Model, error::ChoraError> {
+                        position: &Vector3<f32>, rotation: &Vector3<f32>, scale: &Vector3<f32>)
+                        -> Result<Model, error::ChoraError> {
         Ok(Model::new(
             &self.device,
             meshes,
