@@ -18,9 +18,10 @@ struct ModelInner {
     _model_buffer: Buffer,
 }
 
-pub struct Model(Arc<ModelInner>);
 
-
+pub struct Model {
+    inner: Arc<ModelInner>,
+}
 
 struct ModelBufferStruct {
     _model_matrix: Matrix4<f32>
@@ -50,14 +51,8 @@ impl Model {
             _model_buffer: model_buffer,
         };
 
-        Self(Arc::new(inner))
-    }
-
-    /// Returns an iterator over references to the meshes in this model
-    pub fn iter(&self) -> MeshIter<'_> {
-        MeshIter {
-            meshes: &self.0.meshes,
-            index: 0,
+        Self {
+            inner: Arc::new(inner),
         }
     }
 }
@@ -68,7 +63,7 @@ impl<'a> IntoIterator for &'a Model {
 
     fn into_iter(self) -> Self::IntoIter {
         MeshIter {
-            meshes: &self.0.meshes,
+            meshes: &self.inner.meshes,
             index: 0,
         }
     }
@@ -92,4 +87,3 @@ impl<'a> Iterator for MeshIter<'a> {
         }
     }
 }
-
