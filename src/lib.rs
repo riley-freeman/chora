@@ -1,29 +1,30 @@
+use cgmath::Vector3;
+use etagere::{size2, Allocation, AtlasAllocator};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use cgmath::Vector3;
-use etagere::{size2, Allocation, AtlasAllocator};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use wgpu::wgt::DeviceDescriptor;
+use wgpu::wgt::TextureFormat;
 use wgpu::Adapter;
-use wgpu::Device;
-use wgpu::Queue;
 use wgpu::BackendOptions;
 use wgpu::Backends;
+use wgpu::Device;
 use wgpu::Instance;
 use wgpu::InstanceDescriptor;
 use wgpu::InstanceFlags;
 use wgpu::MemoryBudgetThresholds;
+use wgpu::Queue;
 use wgpu::RequestAdapterOptions;
-use wgpu::wgt::DeviceDescriptor;
-use wgpu::wgt::TextureFormat;
 
 use crate::camera::Camera;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
 use crate::model::Model;
 use crate::render_pipeline::{RenderPipeline, WeakRenderPipeline};
+use crate::render_target::RenderTarget;
 use crate::texture::Texture;
 
 pub mod error;
@@ -33,6 +34,7 @@ pub mod model;
 mod linked_list;
 pub mod texture;
 mod render_pipeline;
+mod render_target;
 
 const MAX_TEXTURE_SIZE: u32 = 4096;
 const MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
@@ -58,6 +60,13 @@ struct RendererInner {
     queue: Queue,
     buffers: usize,
 
+    // Final / Main output
+    camera: Camera,
+    position: Box<Vector3<f32>>,
+    pitch: Box<f32>,
+    yaw: Box<f32>,
+    roll: Box<f32>,
+
     // Mesh Database (I think I don't really know what this is called)
     mesh_collection: HashMap<*const c_void, LinkedList<WeakMesh>>,
     mesh_texture_collection: HashMap<
@@ -79,7 +88,7 @@ impl RendererInner {
 pub struct Renderer(Arc<Mutex<RendererInner>>);
 
 impl Renderer {
-    pub fn new(buffers: usize) -> Result<Self, error::ChoraError> {
+    pub fn new(width: u32, height: u32, buffers: usize) -> Result<Self, error::ChoraError> {
         let adapter = pollster::block_on(INSTANCE.request_adapter(&RequestAdapterOptions {
             ..Default::default()
         })).map_err(|_| error::ChoraError::FailedToFindAdapter {})?;
@@ -89,11 +98,32 @@ impl Renderer {
             ..Default::default()
         })).map_err(|_| error::ChoraError::FailedGettingSuitableDevice {})?;
 
+        let position = Box::new(Vector3::new(0.0f32, 0.0f32, 0.0f32));
+        let pitch = Box::new(0.0f32);
+        let yaw = Box::new(0.0f32);
+        let roll = Box::new(0.0f32);
+        let fov = 77.0f32;
+
+        let camera = Camera::new(
+            &device,
+            width, height,
+            buffers,
+            false, fov, false,
+            position.as_ref().as_ref(),
+            &pitch, &yaw, &roll,
+        )?;
+
         let inner = RendererInner {
             adapter,
             device,
             queue,
             buffers,
+
+            camera,
+            position,
+            pitch,
+            yaw,
+            roll,
 
             mesh_collection: Default::default(),
             mesh_texture_collection: Default::default(),
@@ -105,7 +135,13 @@ impl Renderer {
             mesh_instanced_renders: Default::default(),
         };
 
-        Ok(Renderer(Arc::new(Mutex::new(inner))))
+        let result = Renderer(Arc::new(Mutex::new(inner)));
+        Ok(result)
+    }
+
+    pub fn main_camera(&self) -> Camera {
+        let this = self.0.lock().unwrap();
+        this.camera.clone()
     }
 
     pub fn create_camera(
@@ -172,7 +208,7 @@ impl Renderer {
 
     pub fn create_render_pipeline(&self, code: &str, textures: &Vec<Texture>) -> RenderPipeline {
         let lock = self.0.lock().unwrap();
-        RenderPipeline::new(&lock.device, code, textures)
+        RenderPipeline::new(&lock.device, &lock.camera, code, textures)
     }
 
     pub fn add_mesh_to_render_queue(&mut self, mesh: &Mesh) -> Result<(), error::ChoraError> {
@@ -239,6 +275,7 @@ impl Renderer {
             if let Some(render) = instanced_renders.get_mut(&pipeline_address) {
                 let prev_count = render.count.fetch_sub(1, Ordering::Relaxed);
                 if prev_count == 2 { instanced_renders.remove(&pipeline_address); }
+                create_independent_render = true;
             }
         }
 
@@ -272,6 +309,7 @@ impl Renderer {
             }
             None => {
                 let device = this.device.clone();
+                let camera = this.camera.clone();
                 let textures = pipeline.textures();
                 let atlas_collection = this.mesh_atlas_collection
                     .entry(mesh_address)
@@ -300,8 +338,7 @@ impl Renderer {
                     ).collect();
                     render_textures.extend_from_slice(textures.as_slice());
 
-                    let new_render_pipeline = self.create_render_pipeline(&shader_code, &render_textures);
-
+                    let new_render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &render_textures);
 
                     // Update the info in the renderer
                     render.count.fetch_add(1, Ordering::Relaxed);
@@ -312,7 +349,7 @@ impl Renderer {
                     return;
                 }
 
-                let render_pipeline = RenderPipeline::new(&device, &shader_code, &textures);
+                let render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &textures);
                 let instanced_render = InstancedRender {
                     count: Arc::new(AtomicUsize::new(1)),
                     pipeline: Arc::new(Mutex::new(render_pipeline)),
@@ -399,13 +436,7 @@ mod tests {
 
     #[test]
     fn new_renderer() {
-        let renderer = Renderer::new(2).unwrap();
-
-        let pos = cgmath::vec3(0.0f32, 0.0f32, 0.0f32);
-        let pitch = 0.0f32;
-        let yaw = 0.0f32;
-        let roll = 0.0f32;
-        renderer.create_camera(512, 512, true, 77.0, false, pos.as_ref(), &pitch, &yaw, &roll).unwrap();
+        let _renderer = Renderer::new(512, 512, 2).unwrap();
     }
 
 
@@ -418,26 +449,9 @@ mod tests {
     /// 4. Mesh collection tracking works correctly
     #[test]
     pub fn independent_instanced_grouping_test() {
-        let mut renderer = Renderer::new(2).unwrap();
+        let mut renderer = Renderer::new(512, 512, 2).unwrap();
 
-        // Camera setup
-        let pos = cgmath::vec3(0.0f32, 0.0f32, 0.0f32);
-        let pitch = 0.0f32;
-        let yaw = 0.0f32;
-        let roll = 0.0f32;
-        let camera = renderer.create_camera(
-            512,
-            512,
-            true,
-            77.0,
-            false,
-            pos.as_ref(),
-            &pitch,
-            &yaw,
-            &roll,
-        ).unwrap();
-
-        let shader = include_str!("../src/bs_shader.wgsl");
+        let shader = include_str!("shaders/bs_shader.wgsl");
 
         let texture = renderer.load_texture_from_path(Path::new("kenya.jpg")).unwrap();
         let textures = Vec::from([texture]);
@@ -500,6 +514,5 @@ mod tests {
         drop(i_triangle0);
         drop(i_triangle1);
         drop(s_triangle2);
-        drop(camera);
     }
 }

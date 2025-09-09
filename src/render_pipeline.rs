@@ -8,6 +8,7 @@ use wgpu::PrimitiveState;
 use wgpu::RenderPipelineDescriptor;
 use wgpu::ShaderModuleDescriptor;
 use wgpu::VertexState;
+use crate::render_target::RenderTarget;
 use crate::texture::Texture;
 
 pub(crate) struct RenderPipelineInner {
@@ -28,6 +29,7 @@ pub struct WeakRenderPipeline(Weak<Mutex<RenderPipelineInner>>);
 impl RenderPipeline {
     pub fn new(
         device: &wgpu::Device,
+        render_target: &dyn RenderTarget,
         shader: &str,
         textures: &[Texture]
     ) -> Self {
@@ -43,6 +45,8 @@ impl RenderPipeline {
         };
         let pipeline_layout = device.create_pipeline_layout(&desc);
 
+        let color_target_states = render_target.color_target_states();
+
         let desc = RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
@@ -57,11 +61,7 @@ impl RenderPipeline {
                 module: &shader_module,
                 compilation_options: Default::default(),
                 entry_point: Some("fs_main"),
-                targets: &[Some(ColorTargetState {
-                    format: TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })]    // todo: Camera's texture format
+                targets: color_target_states.as_ref(),
             }),
             primitive: PrimitiveState::default(),
             depth_stencil: None,

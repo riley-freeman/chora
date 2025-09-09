@@ -3,7 +3,7 @@ use std::default::Default;
 use std::mem::size_of;
 
 use wgpu::wgt::BufferDescriptor;
-use wgpu::BufferUsages;
+use wgpu::{BufferUsages, ColorTargetState, ColorWrites};
 use wgpu::TextureViewDescriptor;
 use wgpu::Buffer;
 use wgpu::Device;
@@ -14,6 +14,7 @@ use wgpu::TextureUsages;
 use wgpu::TextureView;
 
 use crate::error::ChoraError;
+use crate::render_target::RenderTarget;
 
 #[allow(unused)]
 struct CameraInner {
@@ -108,6 +109,27 @@ impl Camera {
         };
 
         Ok(Self(Arc::new(Mutex::new(inner))))
+    }
+}
+
+impl RenderTarget for Camera {
+    fn color_target_states(&self) -> Vec<Option<ColorTargetState>> {
+        let lock = self.0.lock().unwrap();
+
+        // Get the format
+        let format = if lock.hdr {
+            TextureFormat::Rgba16Float
+        } else {
+            TextureFormat::Rgba8Unorm
+        };
+
+        let solo = Some(ColorTargetState {
+            format,
+            write_mask: ColorWrites::ALL,
+            blend: None,
+        });
+
+        vec![solo]
     }
 }
 
