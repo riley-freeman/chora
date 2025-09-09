@@ -1,4 +1,3 @@
-use std::ffi::c_void;
 use std::sync::{Arc, Weak};
 use std::sync::Mutex;
 
@@ -9,14 +8,13 @@ use wgpu::PrimitiveState;
 use wgpu::RenderPipelineDescriptor;
 use wgpu::ShaderModuleDescriptor;
 use wgpu::VertexState;
-use crate::mesh::MeshInner;
 use crate::texture::Texture;
 
-struct RenderPipelineInner {
+pub(crate) struct RenderPipelineInner {
     textures: Vec<Texture>,
     shader_code: String,
-    pipeline_layout: wgpu::PipelineLayout,
-    render_pipeline: wgpu::RenderPipeline,
+    _pipeline_layout: wgpu::PipelineLayout,
+    _render_pipeline: wgpu::RenderPipeline,
 }
 
 #[derive(Clone)]
@@ -76,13 +74,17 @@ impl RenderPipeline {
         let inner = RenderPipelineInner {
             textures: Vec::from(textures),
             shader_code: shader.into(),
-            pipeline_layout,
-            render_pipeline,
+            _pipeline_layout: pipeline_layout,
+            _render_pipeline: render_pipeline,
         };
 
         Self {
             inner: Arc::new(Mutex::new(inner))
         }
+    }
+
+    pub fn downgrade(&self) -> WeakRenderPipeline {
+        WeakRenderPipeline(Arc::downgrade(&self.inner))
     }
 
     pub fn textures<'a>(&self) -> Vec<Texture> {
@@ -93,6 +95,12 @@ impl RenderPipeline {
     pub fn shader_code(&self) -> String {
         let lock = self.inner.lock().unwrap();
         lock.shader_code.clone()
+    }
+}
+
+impl WeakRenderPipeline {
+    pub fn upgrade(&self) -> Option<RenderPipeline> {
+        self.0.upgrade().map(|inner| RenderPipeline { inner })
     }
 }
 

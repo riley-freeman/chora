@@ -15,11 +15,11 @@ use wgpu::util::DeviceExt;
 use crate::Renderer;
 
 pub(crate) struct TextureInner {
-    texture: wgpu::Texture,
+    _texture: wgpu::Texture,
+    _renderer: Renderer,
 
     width: u32,
     height: u32,
-    renderer: Renderer,
 }
 
 impl TextureInner {
@@ -59,10 +59,10 @@ impl Texture {
         };
 
         let inner = TextureInner {
-            texture,
+            _texture: texture,
             width,
             height,
-            renderer,
+            _renderer: renderer,
         };
 
         Self {
@@ -70,7 +70,22 @@ impl Texture {
         }
     }
 
-    pub fn load_from_file(renderer: Renderer, path: &Path) -> io::Result<Self> {
+    pub fn empty(renderer: Renderer, device: &Device, width: u32, height: u32, format: TextureFormat) -> Self {
+        let desc = create_new_texture_desc(width, height, format);
+        let texture = device.create_texture(&desc);
+        let inner = TextureInner {
+            _texture: texture,
+            width,
+            height,
+            _renderer: renderer,
+        };
+
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+
+    pub fn load_from_file(renderer: Renderer, device: &Device, queue: &Queue, path: &Path) -> io::Result<Self> {
         let mut img = ImageReader::open(path)?.decode().unwrap();
 
         let width = img.width();
@@ -105,7 +120,7 @@ impl Texture {
         };
         let data = img.as_bytes();
 
-        Ok(Texture::new(renderer, width, height, format, Some(data)))
+        Ok(Texture::new(renderer, device, queue, width, height, format, Some(data)))
     }
 
     pub fn width(&self) -> u32 {

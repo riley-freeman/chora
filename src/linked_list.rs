@@ -1,5 +1,4 @@
 use std::mem;
-use std::ptr::null_mut;
 
 #[derive(Default)]
 pub struct LinkedList<T> {
@@ -401,18 +400,6 @@ impl<T> IntoIterator for LinkedList<T> {
         IntoIter { list: self }
     }
 }
-
-
-impl<T> FromIterator<T> for LinkedList<T> {
-    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
-        let mut list = LinkedList::new();
-        for item in iter {
-            list.push_back(item);
-        }
-        list
-    }
-}
-
 
 impl<T> Extend<T> for LinkedList<T> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
