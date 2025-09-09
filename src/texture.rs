@@ -1,37 +1,48 @@
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
-use image::{DynamicImage, EncodableLayout};
+use image::DynamicImage;
 use image::ImageReader;
 use image::ColorType;
 
-use wgpu::Extent3d;
+use wgpu::{Device, Extent3d, Queue};
 use wgpu::TextureDescriptor;
 use wgpu::TextureDimension;
 use wgpu::TextureFormat;
 use wgpu::wgt::TextureDataOrder;
 use wgpu::util::DeviceExt;
-
 use crate::Renderer;
 
-struct TextureInner {
+pub(crate) struct TextureInner {
     texture: wgpu::Texture,
+
+    width: u32,
+    height: u32,
     renderer: Renderer,
+}
+
+impl TextureInner {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 }
 
 #[derive(Clone)]
 pub struct Texture {
-    inner: Arc<TextureInner>,
+    pub(crate) inner: Arc<TextureInner>,
 }
 
-impl Texture {
-    pub fn new(renderer: Renderer, width: u32, height: u32, format: TextureFormat, data: Option<&[u8]>) -> Self {
-        let desc = create_new_texture_desc(width, height, format);
+#[derive(Debug, Clone)]
+pub struct WeakTexture(Weak<Mutex<TextureInner>>);
 
-        let lock = renderer.0.lock().unwrap();
-        let device = &lock.device;
-        let queue = &lock.queue;
+impl Texture {
+    pub fn new(renderer: Renderer, device: &Device, queue: &Queue, width: u32, height: u32, format: TextureFormat, data: Option<&[u8]>) -> Self {
+        let desc = create_new_texture_desc(width, height, format);
 
         let texture = match data {
             Some(data) => {
@@ -47,10 +58,10 @@ impl Texture {
             }
         };
 
-        drop(lock);
-
         let inner = TextureInner {
             texture,
+            width,
+            height,
             renderer,
         };
 
@@ -95,6 +106,14 @@ impl Texture {
         let data = img.as_bytes();
 
         Ok(Texture::new(renderer, width, height, format, Some(data)))
+    }
+
+    pub fn width(&self) -> u32 {
+        self.inner.width()
+    }
+
+    pub fn height(&self) -> u32 {
+        self.inner.height()
     }
 }
 

@@ -70,6 +70,11 @@ impl Mesh {
         }
     }
 
+    pub fn render_pipeline(&self) -> RenderPipeline {
+        let lock = self.inner.lock().unwrap();
+        lock.pipeline.clone()
+    }
+
     pub fn downgrade(&self) -> WeakMesh {
         WeakMesh(Arc::downgrade(&self.inner))
     }

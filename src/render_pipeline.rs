@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::ffi::c_void;
+use std::sync::{Arc, Weak};
 use std::sync::Mutex;
 
 use wgpu::{ColorTargetState, FragmentState, TextureFormat};
@@ -8,26 +9,29 @@ use wgpu::PrimitiveState;
 use wgpu::RenderPipelineDescriptor;
 use wgpu::ShaderModuleDescriptor;
 use wgpu::VertexState;
-
-use crate::linked_list::LinkedList;
+use crate::mesh::MeshInner;
 use crate::texture::Texture;
 
 struct RenderPipelineInner {
-    textures: LinkedList<Texture>,
+    textures: Vec<Texture>,
+    shader_code: String,
     pipeline_layout: wgpu::PipelineLayout,
     render_pipeline: wgpu::RenderPipeline,
 }
 
 #[derive(Clone)]
 pub struct RenderPipeline {
-    inner: Arc<Mutex<RenderPipelineInner>>,
+    pub(crate) inner: Arc<Mutex<RenderPipelineInner>>,
 }
+
+#[derive(Debug, Clone)]
+pub struct WeakRenderPipeline(Weak<Mutex<RenderPipelineInner>>);
 
 impl RenderPipeline {
     pub fn new(
         device: &wgpu::Device,
         shader: &str,
-        textures: &LinkedList<Texture>
+        textures: &[Texture]
     ) -> Self {
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
@@ -70,7 +74,8 @@ impl RenderPipeline {
         let render_pipeline = device.create_render_pipeline(&desc);
 
         let inner = RenderPipelineInner {
-            textures: textures.clone(),
+            textures: Vec::from(textures),
+            shader_code: shader.into(),
             pipeline_layout,
             render_pipeline,
         };
@@ -78,6 +83,16 @@ impl RenderPipeline {
         Self {
             inner: Arc::new(Mutex::new(inner))
         }
+    }
+
+    pub fn textures<'a>(&self) -> Vec<Texture> {
+        let lock = self.inner.lock().unwrap();
+        lock.textures.clone()
+    }
+
+    pub fn shader_code(&self) -> String {
+        let lock = self.inner.lock().unwrap();
+        lock.shader_code.clone()
     }
 }
 

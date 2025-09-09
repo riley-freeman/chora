@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use cgmath::Vector3;
-
+use etagere::{size2, Allocation, AtlasAllocator};
 use wgpu::Adapter;
 use wgpu::Device;
 use wgpu::Queue;
@@ -22,8 +22,8 @@ use crate::camera::Camera;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
 use crate::model::Model;
-use crate::render_pipeline::RenderPipeline;
-use crate::texture::Texture;
+use crate::render_pipeline::{RenderPipeline, WeakRenderPipeline};
+use crate::texture::{Texture, TextureInner, WeakTexture};
 
 pub mod error;
 pub mod camera;
@@ -32,6 +32,9 @@ pub mod model;
 mod linked_list;
 pub mod texture;
 mod render_pipeline;
+
+const MAX_TEXTURE_SIZE: u32 = 4096;
+const MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
 
 static INSTANCE :LazyLock<Instance> = LazyLock::new(|| {
     Instance::new(&InstanceDescriptor {
@@ -56,9 +59,19 @@ struct RendererInner {
 
     // Mesh Database (I think I don't really know what this is called)
     mesh_collection: HashMap<*const c_void, LinkedList<WeakMesh>>,
+    mesh_texture_collection: HashMap<
+        *const c_void,
+        HashMap<*const c_void, HousedTexture>
+    >,
+    mesh_atlas_collection: HashMap<*const c_void, LinkedList<TextureAtlas>>,
+    mesh_housed_texture_collection: HashMap<*const c_void, (HousedTexture, usize)>,
+    mesh_render_pipeline_collection: HashMap<*const c_void, WeakRenderPipeline>,
 
     independent_renders: HashMap<*const c_void, ()>,
-    instanced_renders: HashMap<*const c_void, usize>,
+    mesh_instanced_renders: HashMap<*const c_void, Vec<InstancedRender>>,
+}
+
+impl RendererInner {
 }
 
 #[derive(Clone)]
@@ -82,8 +95,11 @@ impl Renderer {
             buffers,
 
             mesh_collection: Default::default(),
+            mesh_texture_collection: Default::default(),
+            mesh_render_pipeline_collection: Default::default(),
+
             independent_renders: Default::default(),
-            instanced_renders: Default::default(),
+            mesh_instanced_renders: Default::default(),
         };
 
         Ok(Renderer(Arc::new(Mutex::new(inner))))
@@ -140,14 +156,17 @@ impl Renderer {
         Texture::load_from_file(self.clone(), path)
     }
 
-    pub fn create_render_pipeline(&self, code: &str, textures: &LinkedList<Texture>) -> RenderPipeline {
+    pub fn create_render_pipeline(&self, code: &str, textures: &Vec<Texture>) -> RenderPipeline {
         let lock = self.0.lock().unwrap();
         RenderPipeline::new(&lock.device, code, textures)
     }
 
-    pub fn add_mesh_to_render_queue(&self, mesh: &Mesh) -> Result<(), error::ChoraError> {
+    pub fn add_mesh_to_render_queue(&mut self, mesh: &Mesh) -> Result<(), error::ChoraError> {
         let mesh_address = mesh.inner.as_ref() as *const _ as *const c_void;
         let weak_mesh = mesh.downgrade();
+
+
+
         let mut this = self.0.lock().unwrap();
 
         // Organize the mesh into groups
@@ -158,6 +177,20 @@ impl Renderer {
         let _mesh_collection_node = mesh_collection
             .push_front(weak_mesh.clone());
 
+        let mesh_image_collection = this.mesh_texture_collection
+            .entry(mesh_address)
+            .or_insert(HashMap::new());
+
+        let render_pipeline = mesh.render_pipeline();
+        let textures = render_pipeline.textures();
+        for texture in &textures {
+            let texture_address = texture.inner.as_ref() as *const _ as *const c_void;
+            let image_collection = mesh_image_collection
+                .entry(texture_address)
+                .or_insert(0);
+            *image_collection += 1;
+        }
+
         // Check for instanceable meshes
         let mesh_collection = this.mesh_collection
             .get(&(mesh.inner.as_ref() as *const _ as _)).unwrap();
@@ -166,9 +199,16 @@ impl Renderer {
         if mesh_collection_len > 1 {
             if mesh_collection_len == 2 {
                 this.independent_renders.remove(&mesh_address);
-                this.instanced_renders.insert(mesh_address, 1);
+                this.mesh_instanced_renders.insert(mesh_address, 1);
+
+                // TODO Handle the original mesh's render pipeline.
             }
-            *this.instanced_renders.get_mut(&mesh_address).unwrap() += 1;
+            *this.mesh_instanced_renders.get_mut(&mesh_address).unwrap() += 1;
+            drop(this);
+
+            self.handle_new_instance_render_pipeline(mesh_address, render_pipeline);
+
+            // Build new render groups.
         } else {
             // Create a single independent render.
             this.independent_renders.insert(mesh_address, ());
@@ -189,16 +229,145 @@ impl Renderer {
         let mut this = self.0.lock().unwrap();
 
         this.independent_renders.remove(&mesh_address);
-        if let Some(count) = this.instanced_renders.get_mut(&mesh_address) {
+        if let Some(count) = this.mesh_instanced_renders.get_mut(&mesh_address) {
             *count -= 1;
             if *count == 1 {
                 // Create a new independent render.
                 this.independent_renders.insert(mesh_address, ());
-                this.instanced_renders.remove(&mesh_address);
+                this.mesh_instanced_renders.remove(&mesh_address);
             }
         }
     }
 
+
+    fn handle_new_instance_render_pipeline(&mut self, mesh_address: *const c_void, pipeline: RenderPipeline) {
+        let mut cloned = self.clone();
+
+        // Create a new render pipeline
+        let shader_code = pipeline.shader_code(); // TODO: make this shader dynamic.
+
+        let mut this = self.0.lock().unwrap();
+
+        let pipeline_collection = this.mesh_render_pipeline_collection.get_mut(&mesh_address);
+
+        match pipeline_collection {
+            Some(render_pipeline) => {
+                let instanced_renders = this.mesh_instanced_renders
+                    .entry(mesh_address)
+                    .or_insert(Vec::new());
+
+
+
+            }
+            None => {
+                let device = this.device.clone();
+                let textures = pipeline.textures();
+                let atlas_collection = this.mesh_atlas_collection
+                    .entry(mesh_address)
+                    .or_insert(LinkedList::new());
+
+                let housed_textures: Vec<HousedTexture> = textures.iter().map(|texture| {
+                    cloned.handle_new_instance_texture(atlas_collection, &device, texture.clone())
+                }).collect();
+                let textures: Vec<Texture> = housed_textures
+                    .iter()
+                    .map(|housed_textures| housed_textures.atlas.clone()).collect();
+
+                let instanced_renders = this.mesh_instanced_renders
+                    .entry(mesh_address)
+                    .or_insert(Vec::new());
+
+                for render in instanced_renders.iter_mut() {
+                    if render.housed_textures.len() >= MAX_BINDABLE_TEXTURE_COUNT { continue; }
+
+                    // Merge the new textures into the render pipeline.
+                    let mut render_textures: Vec<Texture> = render.housed_textures.iter().map(
+                        |texture| texture.atlas.clone()
+                    ).collect();
+                    render_textures.extend_from_slice(textures.as_slice());
+
+                    let new_render_pipeline = self.create_render_pipeline(&shader_code, &render_textures);
+
+                    // Update the info in the renderer
+                    render.count += 1;
+                    render.pipeline = new_render_pipeline;
+                    render.housed_textures.extend(housed_textures);
+                    return;
+                }
+
+                let render_pipeline = self.create_render_pipeline(&shader_code, &textures);
+                let instanced_render = InstancedRender {
+                    count: 1,
+                    pipeline: render_pipeline,
+                    housed_textures
+                };
+                instanced_renders.push(instanced_render);
+            }
+        }
+    }
+
+    fn handle_new_instance_texture(
+        &mut self, atlas_collection:
+        &mut LinkedList<TextureAtlas>,
+        device: &Device,
+        texture: Texture
+    ) -> HousedTexture {
+        let width = texture.width();
+        let height = texture.height();
+        for atlas in atlas_collection.into_iter() {
+            let allocation = atlas.allocator.allocate(size2(
+                width as _, height as _
+            ));
+            if allocation.is_some() {
+                return HousedTexture {
+                    atlas: atlas.texture.clone(),
+                    allocation: allocation.unwrap(),
+                };
+            }
+        }
+
+        let new_texture = Texture::new(
+            self.clone(),
+            device,
+            unsafe {&*std::ptr::null()}, // We don need this...
+            MAX_TEXTURE_SIZE,
+            MAX_TEXTURE_SIZE,
+            TextureFormat::Rgba8Unorm,
+            None
+        );
+        let mut allocator = AtlasAllocator::new(size2(
+            MAX_TEXTURE_SIZE as _, MAX_TEXTURE_SIZE as _
+        ));
+        let allocation = allocator.allocate(size2(
+            width as _, height as _
+        )).unwrap();
+
+        atlas_collection.push_front(TextureAtlas {
+            texture: new_texture.clone(),
+            allocator,
+        });
+
+        HousedTexture {
+            atlas: new_texture,
+            allocation,
+        }
+    }
+}
+
+struct InstancedRender {
+    pipeline: RenderPipeline,
+    housed_textures: Vec<HousedTexture>,
+    count: usize,
+}
+
+struct HousedTexture {
+    atlas: Texture,
+    allocation: Allocation
+}
+
+struct TextureAtlas {
+    allocator: AtlasAllocator,
+    texture: Texture,
 }
 
 #[cfg(test)]
@@ -278,7 +447,7 @@ mod tests {
         {
             let lock = renderer.0.lock().unwrap();
             assert_eq!(lock.independent_renders.len(), 1, "Single mesh should be independent");
-            assert_eq!(lock.instanced_renders.len(), 0, "No instanced renders should exist");
+            assert_eq!(lock.mesh_instanced_renders.len(), 0, "No instanced renders should exist");
             assert_eq!(lock.mesh_collection.len(), 1, "Should have one mesh collection");
             assert_eq!(lock.mesh_collection.values().next().unwrap().len(), 1, "Collection should have one mesh");
         }
@@ -288,11 +457,11 @@ mod tests {
         {
             let lock = renderer.0.lock().unwrap();
             assert_eq!(lock.independent_renders.len(), 0, "No independent renders should remain");
-            assert_eq!(lock.instanced_renders.len(), 1, "Should have one instanced render");
+            assert_eq!(lock.mesh_instanced_renders.len(), 1, "Should have one instanced render");
             assert_eq!(lock.mesh_collection.len(), 1, "Should have one mesh collection");
             assert_eq!(lock.mesh_collection.values().next().unwrap().len(), 2, "Collection should have two meshes");
 
-            let i_render = lock.instanced_renders.iter().nth(0).unwrap();
+            let i_render = lock.mesh_instanced_renders.iter().nth(0).unwrap();
             assert_eq!(*i_render.1, 2, "Instance count should be 2");
         }
 
@@ -301,10 +470,10 @@ mod tests {
         {
             let lock = renderer.0.lock().unwrap();
             assert_eq!(lock.independent_renders.len(), 1, "Should have one independent render");
-            assert_eq!(lock.instanced_renders.len(), 1, "Should have one instanced render");
+            assert_eq!(lock.mesh_instanced_renders.len(), 1, "Should have one instanced render");
             assert_eq!(lock.mesh_collection.len(), 2, "Should have two mesh collections");
 
-            let i_render = lock.instanced_renders.iter().nth(0).unwrap();
+            let i_render = lock.mesh_instanced_renders.iter().nth(0).unwrap();
             assert_eq!(*i_render.1, 2, "Instance count should remain 2");
         }
 

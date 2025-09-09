@@ -1,4 +1,5 @@
 use std::mem;
+use std::ptr::null_mut;
 
 #[derive(Default)]
 pub struct LinkedList<T> {
@@ -107,7 +108,7 @@ impl <T> LinkedList<T> {
         }
     }
 
-    pub fn pinch(&mut self, ptr: *mut LinkedNode<T>) -> Option<T> {
+    pub unsafe fn pinch(&mut self, ptr: *mut LinkedNode<T>) -> Option<T> {
         if ptr.is_null() { return None }
 
         if ptr == self.first {
@@ -126,6 +127,19 @@ impl <T> LinkedList<T> {
 
             Some(node.inner)
         }
+    }
+
+    pub unsafe fn merge(&mut self, right: LinkedList<T>) {
+        if self.length == 0 {
+            *self = right;
+            return;
+        }
+
+        self.length += right.len();
+
+        let last = unsafe { &mut *self.last };
+        last.next = right.first;
+        self.last = right.last;
     }
 
     pub fn len(&self) -> usize {
@@ -388,6 +402,18 @@ impl<T> IntoIterator for LinkedList<T> {
     }
 }
 
+
+impl<T> FromIterator<T> for LinkedList<T> {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+        let mut list = LinkedList::new();
+        for item in iter {
+            list.push_back(item);
+        }
+        list
+    }
+}
+
+
 impl<T> Extend<T> for LinkedList<T> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
@@ -576,26 +602,28 @@ mod tests {
 
     #[test]
     fn test_pinch() {
-        let mut list = LinkedList::<i32>::new();
-        assert_eq!(list.pinch(std::ptr::null_mut()), None);
+        unsafe {
+            let mut list = LinkedList::<i32>::new();
+            assert_eq!(list.pinch(std::ptr::null_mut()), None);
 
-        let node1 = list.push_back(10);
-        let node2 = list.push_back(20);
-        let node3 = list.push_back(30);
+            let node1 = list.push_back(10);
+            let node2 = list.push_back(20);
+            let node3 = list.push_back(30);
 
-        assert_eq!(list.pinch(node2), Some(20));
-        assert_eq!(list.length, 2);
-        assert_eq!(unsafe { (*node1).next }, node3);
-        assert_eq!(unsafe { (*node3).prev }, node1);
+            assert_eq!(list.pinch(node2), Some(20));
+            assert_eq!(list.length, 2);
+            assert_eq!((*node1).next, node3);
+            assert_eq!((*node3).prev, node1);
 
-        assert_eq!(list.pinch(node3), Some(30));
-        assert_eq!(list.length, 1);
-        assert!(unsafe { (*node1).next.is_null() });
+            assert_eq!(list.pinch(node3), Some(30));
+            assert_eq!(list.length, 1);
+            assert!((*node1).next.is_null());
 
-        assert_eq!(list.pinch(node1), Some(10));
-        assert_eq!(list.length, 0);
-        assert!(list.first.is_null());
-        assert!(list.last.is_null());
+            assert_eq!(list.pinch(node1), Some(10));
+            assert_eq!(list.length, 0);
+            assert!(list.first.is_null());
+            assert!(list.last.is_null());
+        }
     }
 
     #[test]
