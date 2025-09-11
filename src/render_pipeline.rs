@@ -111,6 +111,7 @@ impl RenderPipeline {
         let pipeline_layout = device.create_pipeline_layout(&desc);
 
         let color_target_states = render_target.color_target_states();
+        let depth_target_state = render_target.depth_stencil_state();
 
         let desc = RenderPipelineDescriptor {
             label: None,
@@ -129,7 +130,7 @@ impl RenderPipeline {
                 targets: color_target_states.as_ref(),
             }),
             primitive: PrimitiveState::default(),
-            depth_stencil: None,
+            depth_stencil: depth_target_state,
             multisample: MultisampleState::default(),
             multiview: None,
             cache: None,

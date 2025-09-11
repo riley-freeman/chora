@@ -6,13 +6,13 @@ use wgpu::wgt::BufferDescriptor;
 use wgpu::{BufferUsages, ColorTargetState, ColorWrites};
 use wgpu::TextureViewDescriptor;
 use wgpu::Buffer;
+use wgpu::CompareFunction::Less;
 use wgpu::Device;
 use wgpu::Texture;
 use wgpu::TextureDescriptor;
 use wgpu::TextureFormat;
 use wgpu::TextureUsages;
 use wgpu::TextureView;
-
 use crate::error::ChoraError;
 use crate::render_target::RenderTarget;
 
@@ -131,8 +131,17 @@ impl RenderTarget for Camera {
 
         vec![solo]
     }
-}
 
+    fn depth_stencil_state(&self) -> Option<wgpu::DepthStencilState> {
+        Some(wgpu::DepthStencilState {
+            format: find_camera_depth_format(),
+            depth_write_enabled: true,
+            depth_compare: Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        })
+    }
+}
 
 fn create_camera_texture(
     device: &Device,
@@ -170,7 +179,7 @@ fn create_depth_texture(
     width: u32,
     height: u32,
 ) -> (Texture, TextureView) {
-    let format = TextureFormat::Depth24PlusStencil8;
+    let format = find_camera_depth_format();
     let desc = TextureDescriptor {
         dimension: wgpu::TextureDimension::D2,
         format,
@@ -186,7 +195,7 @@ fn create_depth_texture(
 
         label: None,
     };
-    let texture = device.create_texture(&desc);  
+    let texture = device.create_texture(&desc);
 
     let view_desc = texture_view_desc(format);
     let view = texture.create_view(&view_desc);
@@ -215,6 +224,10 @@ fn find_camera_format(hdr: bool) -> TextureFormat {
         false => TextureFormat::Rgba8Unorm,
         true => TextureFormat::Rgba16Float,
     }
+}
+
+fn find_camera_depth_format() -> TextureFormat {
+    TextureFormat::Depth24PlusStencil8
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
