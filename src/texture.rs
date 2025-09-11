@@ -6,7 +6,7 @@ use image::DynamicImage;
 use image::ImageReader;
 use image::ColorType;
 
-use wgpu::{Device, Extent3d, Queue};
+use wgpu::{Device, Extent3d, Queue, TextureView};
 use wgpu::TextureDescriptor;
 use wgpu::TextureDimension;
 use wgpu::TextureFormat;
@@ -16,6 +16,7 @@ use crate::Renderer;
 
 pub(crate) struct TextureInner {
     _texture: wgpu::Texture,
+    view: wgpu::TextureView,
     _renderer: Renderer,
 
     width: u32,
@@ -58,8 +59,11 @@ impl Texture {
             }
         };
 
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let inner = TextureInner {
             _texture: texture,
+            view,
             width,
             height,
             _renderer: renderer,
@@ -73,8 +77,10 @@ impl Texture {
     pub fn empty(renderer: Renderer, device: &Device, width: u32, height: u32, format: TextureFormat) -> Self {
         let desc = create_new_texture_desc(width, height, format);
         let texture = device.create_texture(&desc);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let inner = TextureInner {
             _texture: texture,
+            view,
             width,
             height,
             _renderer: renderer,
@@ -130,6 +136,8 @@ impl Texture {
     pub fn height(&self) -> u32 {
         self.inner.height()
     }
+
+    pub fn view(&self) -> TextureView { self.inner.view.clone() }
 }
 
 fn create_new_texture_desc<'a>(width: u32, height: u32, format: TextureFormat) -> TextureDescriptor<'a> {
