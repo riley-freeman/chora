@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use wgpu::wgt::DeviceDescriptor;
 use wgpu::wgt::TextureFormat;
-use wgpu::Adapter;
+use wgpu::{Adapter, AddressMode, FilterMode};
 use wgpu::BackendOptions;
 use wgpu::Backends;
 use wgpu::Device;
@@ -24,7 +24,7 @@ use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
 use crate::model::Model;
 use crate::render_pipeline::{RenderPipeline, WeakRenderPipeline};
-use crate::render_target::RenderTarget;
+use crate::sampler::Sampler;
 use crate::texture::Texture;
 
 pub mod error;
@@ -33,8 +33,9 @@ pub mod mesh;
 pub mod model;
 mod linked_list;
 pub mod texture;
-mod render_pipeline;
-mod render_target;
+pub mod render_pipeline;
+pub mod render_target;
+pub mod sampler;
 
 const MAX_TEXTURE_SIZE: u32 = 4096;
 const MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
@@ -206,9 +207,14 @@ impl Renderer {
         Texture::load_from_file(self.clone(), &device, &queue, path)
     }
 
-    pub fn create_render_pipeline(&self, code: &str, textures: &Vec<Texture>) -> RenderPipeline {
+    pub fn create_sampler(&self, address_mode: AddressMode, filter_mode: FilterMode) -> Sampler {
+        let device = self.0.lock().unwrap().device.clone();
+        Sampler::new(self.clone(), &device, address_mode, filter_mode)
+    }
+
+    pub fn create_render_pipeline(&self, code: &str, textures: &Vec<Texture>, sampler: Option<Sampler>) -> RenderPipeline {
         let lock = self.0.lock().unwrap();
-        RenderPipeline::new(&lock.device, &lock.camera, code, textures)
+        RenderPipeline::new(&lock.device, &lock.camera, code, textures, sampler)
     }
 
     pub fn add_mesh_to_render_queue(&mut self, mesh: &Mesh) -> Result<(), error::ChoraError> {
@@ -311,6 +317,7 @@ impl Renderer {
                 let device = this.device.clone();
                 let camera = this.camera.clone();
                 let textures = pipeline.textures();
+                let sampler = pipeline.sampler();
                 let atlas_collection = this.mesh_atlas_collection
                     .entry(mesh_address)
                     .or_insert(LinkedList::new());
@@ -338,7 +345,7 @@ impl Renderer {
                     ).collect();
                     render_textures.extend_from_slice(textures.as_slice());
 
-                    let new_render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &render_textures);
+                    let new_render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &render_textures, sampler);
 
                     // Update the info in the renderer
                     render.count.fetch_add(1, Ordering::Relaxed);
@@ -349,7 +356,7 @@ impl Renderer {
                     return;
                 }
 
-                let render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &textures);
+                let render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &textures, sampler);
                 let instanced_render = InstancedRender {
                     count: Arc::new(AtomicUsize::new(1)),
                     pipeline: Arc::new(Mutex::new(render_pipeline)),
@@ -455,7 +462,10 @@ mod tests {
 
         let texture = renderer.load_texture_from_path(Path::new("kenya.jpg")).unwrap();
         let textures = Vec::from([texture]);
-        let render_pipeline = renderer.create_render_pipeline(shader, &textures);
+
+        let sampler = renderer.create_sampler(AddressMode::Repeat, FilterMode::Linear);
+
+        let render_pipeline = renderer.create_render_pipeline(shader, &textures, Some(sampler));
 
         // Create test meshes
         let vertices = [

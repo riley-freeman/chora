@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 use std::sync::Mutex;
 
-use wgpu::{ColorTargetState, FragmentState, TextureFormat};
+use wgpu::FragmentState;
 use wgpu::MultisampleState;
 use wgpu::PipelineLayoutDescriptor;
 use wgpu::PrimitiveState;
@@ -9,10 +9,12 @@ use wgpu::RenderPipelineDescriptor;
 use wgpu::ShaderModuleDescriptor;
 use wgpu::VertexState;
 use crate::render_target::RenderTarget;
+use crate::sampler::Sampler;
 use crate::texture::Texture;
 
 pub(crate) struct RenderPipelineInner {
     textures: Vec<Texture>,
+    sampler: Option<Sampler>,
     shader_code: String,
 
     texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -35,14 +37,16 @@ impl RenderPipeline {
         device: &wgpu::Device,
         render_target: &dyn RenderTarget,
         shader: &str,
-        textures: &[Texture]
+        textures: &[Texture],
+        sampler: Option<Sampler>
     ) -> Self {
+        // Create the texture bind group layout.
         let mut texture_bind_group_layout_entries = Vec::with_capacity(textures.len());
         let mut texture_bind_group_entries = Vec::with_capacity(textures.len());
 
         let texture_views = textures.iter().map(|texture| texture.view()).collect::<Vec<_>>();
 
-        for (i, texture) in textures.iter().enumerate() {
+        for i in 0..textures.len() {
             texture_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
                 binding: i as _,
                 count: None,
@@ -58,6 +62,27 @@ impl RenderPipeline {
                 binding: i as _,
                 resource: wgpu::BindingResource::TextureView(&texture_views[i]),
             });
+        }
+
+        // Add the sampler if it exists.
+        let hal_sampler = sampler.as_ref().map(|s| {
+            s.inner.lock().unwrap().sampler.clone()
+        });
+
+        // Add it to the bind group.
+        if let Some(sampler) = &hal_sampler {
+            let binding = textures.len() as _;
+            texture_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                count: None,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            });
+
+            texture_bind_group_entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Sampler(sampler)
+            })
         }
 
         let texture_bind_group_layout =
@@ -113,6 +138,7 @@ impl RenderPipeline {
 
         let inner = RenderPipelineInner {
             textures: Vec::from(textures),
+            sampler,
             shader_code: shader.into(),
             texture_bind_group_layout,
             texture_bind_group,
@@ -132,6 +158,11 @@ impl RenderPipeline {
     pub fn textures<'a>(&self) -> Vec<Texture> {
         let lock = self.inner.lock().unwrap();
         lock.textures.clone()
+    }
+
+    pub fn sampler(&self) -> Option<Sampler> {
+        let lock = self.inner.lock().unwrap();
+        lock.sampler.clone()
     }
 
     pub fn shader_code(&self) -> String {
