@@ -212,9 +212,26 @@ impl Renderer {
         Sampler::new(self.clone(), &device, address_mode, filter_mode)
     }
 
-    pub fn create_render_pipeline(&self, code: &str, textures: &Vec<Texture>, sampler: Option<Sampler>) -> RenderPipeline {
+    pub fn create_render_pipeline(
+        &self,
+        code: &str,
+        textures: &Vec<Texture>,
+        sampler: Option<Sampler>,
+        allow_world_uniform: bool,
+        allow_camera_uniform: bool,
+        allow_object_uniform: bool,
+    ) -> RenderPipeline {
         let lock = self.0.lock().unwrap();
-        RenderPipeline::new(&lock.device, &lock.camera, code, textures, sampler)
+        RenderPipeline::new(
+            &lock.device,
+            &lock.camera,
+            code,
+            textures,
+            sampler,
+            allow_world_uniform,
+            allow_camera_uniform,
+            allow_object_uniform,
+        )
     }
 
     pub fn add_mesh_to_render_queue(&mut self, mesh: &Mesh) -> Result<(), error::ChoraError> {
@@ -345,7 +362,16 @@ impl Renderer {
                     ).collect();
                     render_textures.extend_from_slice(textures.as_slice());
 
-                    let new_render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &render_textures, sampler);
+                    let new_render_pipeline = RenderPipeline::new(
+                        &device,
+                        &camera,
+                        &shader_code,
+                        &render_textures,
+                        sampler,
+                        false,
+                        false,
+                        false,
+                    );
 
                     // Update the info in the renderer
                     render.count.fetch_add(1, Ordering::Relaxed);
@@ -356,7 +382,16 @@ impl Renderer {
                     return;
                 }
 
-                let render_pipeline = RenderPipeline::new(&device, &camera, &shader_code, &textures, sampler);
+                let render_pipeline = RenderPipeline::new(
+                    &device,
+                    &camera,
+                    &shader_code,
+                    &textures,
+                    sampler,
+                    false,
+                    false,
+                    false,
+                );
                 let instanced_render = InstancedRender {
                     count: Arc::new(AtomicUsize::new(1)),
                     pipeline: Arc::new(Mutex::new(render_pipeline)),
@@ -465,7 +500,14 @@ mod tests {
 
         let sampler = renderer.create_sampler(AddressMode::Repeat, FilterMode::Linear);
 
-        let render_pipeline = renderer.create_render_pipeline(shader, &textures, Some(sampler));
+        let render_pipeline = renderer.create_render_pipeline(
+            shader,
+            &textures,
+            Some(sampler),
+            false,
+            false,
+            false
+        );
 
         // Create test meshes
         let vertices = [

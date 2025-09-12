@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 use std::sync::Mutex;
 
-use wgpu::FragmentState;
+use wgpu::{BindGroup, BindGroupLayout, Device, FragmentState, TextureView};
 use wgpu::MultisampleState;
 use wgpu::PipelineLayoutDescriptor;
 use wgpu::PrimitiveState;
@@ -17,6 +17,7 @@ pub(crate) struct RenderPipelineInner {
     sampler: Option<Sampler>,
     shader_code: String,
 
+    uniform_bind_group_layout: wgpu::BindGroupLayout,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     texture_bind_group: wgpu::BindGroup,
 
@@ -38,65 +39,19 @@ impl RenderPipeline {
         render_target: &dyn RenderTarget,
         shader: &str,
         textures: &[Texture],
-        sampler: Option<Sampler>
+        sampler: Option<Sampler>,
+        allow_world_uniform: bool,
+        allow_camera_uniform: bool,
+        allow_object_uniform: bool,
     ) -> Self {
+        // Create the uniform bind group layout.
+        let uniform_bind_group_layout = Self::create_uniform_bind_group_layout(device, allow_world_uniform, allow_camera_uniform, allow_object_uniform);
+
         // Create the texture bind group layout.
-        let mut texture_bind_group_layout_entries = Vec::with_capacity(textures.len());
-        let mut texture_bind_group_entries = Vec::with_capacity(textures.len());
+        let texture_bind_group_layout = Self::create_texture_bind_group_layout(device, textures, &sampler);
 
         let texture_views = textures.iter().map(|texture| texture.view()).collect::<Vec<_>>();
-
-        for i in 0..textures.len() {
-            texture_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
-                binding: i as _,
-                count: None,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    multisampled: false,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                }
-            });
-
-            texture_bind_group_entries.push(wgpu::BindGroupEntry {
-                binding: i as _,
-                resource: wgpu::BindingResource::TextureView(&texture_views[i]),
-            });
-        }
-
-        // Add the sampler if it exists.
-        let hal_sampler = sampler.as_ref().map(|s| {
-            s.inner.lock().unwrap().sampler.clone()
-        });
-
-        // Add it to the bind group.
-        if let Some(sampler) = &hal_sampler {
-            let binding = textures.len() as _;
-            texture_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
-                binding,
-                count: None,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            });
-
-            texture_bind_group_entries.push(wgpu::BindGroupEntry {
-                binding,
-                resource: wgpu::BindingResource::Sampler(sampler)
-            })
-        }
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: None,
-                entries: &texture_bind_group_layout_entries,
-            });
-
-        let texture_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &texture_bind_group_layout,
-                entries: &texture_bind_group_entries
-            });
+        let texture_bind_group = Self::create_texture_bind_group(device, textures, &sampler, &texture_bind_group_layout, &texture_views);
 
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
@@ -105,7 +60,7 @@ impl RenderPipeline {
 
         let desc = PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&texture_bind_group_layout],
+            bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout],
             push_constant_ranges: &[],
         };
         let pipeline_layout = device.create_pipeline_layout(&desc);
@@ -141,6 +96,7 @@ impl RenderPipeline {
             textures: Vec::from(textures),
             sampler,
             shader_code: shader.into(),
+            uniform_bind_group_layout,
             texture_bind_group_layout,
             texture_bind_group,
             _pipeline_layout: pipeline_layout,
@@ -150,6 +106,108 @@ impl RenderPipeline {
         Self {
             inner: Arc::new(Mutex::new(inner))
         }
+    }
+
+    fn create_texture_bind_group(device: &Device, textures: &[Texture], sampler: &Option<Sampler>, texture_bind_group_layout: &BindGroupLayout, texture_views: &Vec<TextureView>) -> BindGroup {
+        let hal_sampler = sampler.as_ref().map(|s| {
+            s.inner.lock().unwrap().sampler.clone()
+        });
+
+        let mut texture_bind_group_entries = Vec::with_capacity(textures.len());
+        for i in 0..textures.len() {
+            texture_bind_group_entries.push(wgpu::BindGroupEntry {
+                binding: i as _,
+                resource: wgpu::BindingResource::TextureView(&texture_views[i]),
+            });
+        }
+        if let Some(sampler) = &hal_sampler {
+            let binding = textures.len() as _;
+            texture_bind_group_entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::Sampler(sampler)
+            })
+        }
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &texture_bind_group_layout,
+            entries: &texture_bind_group_entries
+        })
+    }
+
+    fn create_texture_bind_group_layout(device: &Device, textures: &[Texture], sampler: &Option<Sampler>) -> BindGroupLayout {
+        let mut texture_bind_group_layout_entries = Vec::with_capacity(textures.len());
+
+        for i in 0..textures.len() {
+            texture_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: i as _,
+                count: None,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                }
+            });
+        }
+
+        if sampler.is_some() {
+            let binding = textures.len() as _;
+            texture_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                count: None,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            });
+        }
+
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &texture_bind_group_layout_entries,
+        })
+    }
+
+    fn create_uniform_bind_group_layout(device: &Device, allow_world_uniform: bool, allow_camera_uniform: bool, allow_object_uniform: bool) -> BindGroupLayout {
+        let mut uniform_bind_group_layout_entries = Vec::new();
+        if allow_world_uniform {
+            uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                count: None,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+            });
+        }
+        if allow_camera_uniform {
+            uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                count: None,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+            });
+        }
+        if allow_object_uniform {
+            uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                count: None,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+            });
+        }
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &uniform_bind_group_layout_entries,
+        })
     }
 
     pub fn downgrade(&self) -> WeakRenderPipeline {

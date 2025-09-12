@@ -143,7 +143,7 @@ impl Texture {
 fn create_new_texture_desc<'a>(width: u32, height: u32, format: TextureFormat) -> TextureDescriptor<'a> {
     TextureDescriptor {
         label: None,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         size: Extent3d {
             width,
             height,
