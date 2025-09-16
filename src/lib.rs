@@ -6,9 +6,10 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
-use wgpu::wgt::DeviceDescriptor;
+use wgpu::wgt::{DeviceDescriptor, PollType, SamplerDescriptor};
 use wgpu::wgt::TextureFormat;
-use wgpu::{Adapter, AddressMode, FilterMode};
+use wgpu::{Adapter, AddressMode, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, TextureSampleType, TextureViewDimension, VertexState};
+use std::borrow::Cow;
 use wgpu::BackendOptions;
 use wgpu::Backends;
 use wgpu::Device;
@@ -18,7 +19,7 @@ use wgpu::InstanceFlags;
 use wgpu::MemoryBudgetThresholds;
 use wgpu::Queue;
 use wgpu::RequestAdapterOptions;
-
+use wgpu::util::RenderEncoder;
 use crate::camera::Camera;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
@@ -60,6 +61,10 @@ struct RendererInner {
     device: Device,
     queue: Queue,
     buffers: usize,
+
+    cast_render_pipeline: wgpu::RenderPipeline,
+    cast_bind_group_layout: BindGroupLayout,
+    cast_sampler: wgpu::Sampler,
 
     // Final / Main output
     camera: Camera,
@@ -114,6 +119,15 @@ impl Renderer {
             &pitch, &yaw, &roll,
         )?;
 
+        // Create a bind group layout & render pipeline
+
+        let cast_bind_group_layout = Self::create_cast_bind_group_layout(&device);
+
+        let cast_render_pipeline = Self::create_cast_render_pipeline(&device, &cast_bind_group_layout);
+
+        let cast_sampler =
+            device.create_sampler(&SamplerDescriptor::default());
+
         let inner = RendererInner {
             adapter,
             device,
@@ -126,6 +140,11 @@ impl Renderer {
             yaw,
             roll,
 
+            cast_bind_group_layout,
+            cast_render_pipeline,
+            cast_sampler,
+
+
             mesh_collection: Default::default(),
             mesh_texture_collection: Default::default(),
             mesh_render_pipeline_collection: Default::default(),
@@ -137,7 +156,76 @@ impl Renderer {
         };
 
         let result = Renderer(Arc::new(Mutex::new(inner)));
+
+
+
         Ok(result)
+    }
+
+    fn create_cast_render_pipeline(device: &Device, cast_bind_group_layout: &BindGroupLayout) -> wgpu::RenderPipeline {
+        let cast_shader = include_str!("./shaders/cast.wgsl");
+        let shader_code = Cow::from(cast_shader);
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&cast_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let shader_module = device.create_shader_module(ShaderModuleDescriptor {
+            label: None,
+            source: ShaderSource::Wgsl(shader_code)
+        });
+
+        device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &shader_module,
+                entry_point: Some("vs_main"),
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[]
+            },
+            fragment: Some(FragmentState {
+                module: &shader_module,
+                entry_point: Some("fs_main"),
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(ColorTargetState {
+                    write_mask: ColorWrites::all(),
+                    format: TextureFormat::Rgba8Unorm,
+                    blend: None,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            multisample: MultisampleState::default(),
+            cache: None,
+            depth_stencil: None,
+            multiview: None,
+        })
+    }
+
+    fn create_cast_bind_group_layout(device: &Device) -> BindGroupLayout {
+        device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    count: None,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        multisampled: false,
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                    }
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    count: None,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                }
+            ]
+        })
     }
 
     pub fn main_camera(&self) -> Camera {
@@ -193,18 +281,22 @@ impl Renderer {
         let lock = self.0.lock().unwrap();
         let device = lock.device.clone();
         let queue = lock.queue.clone();
+        let cast_layout = lock.cast_bind_group_layout.clone();
+        let cast_sampler = lock.cast_sampler.clone();
         drop(lock);
 
-        Texture::new(self.clone(), &device, &queue, width, height, format, data)
+        Texture::new(self.clone(), &device, &queue, &cast_layout, &cast_sampler, width, height, format, data)
     }
 
     pub fn load_texture_from_path(&self, path: &Path) -> io::Result<Texture> {
         let lock = self.0.lock().unwrap();
         let device = lock.device.clone();
         let queue = lock.queue.clone();
+        let cast_layout = lock.cast_bind_group_layout.clone();
+        let cast_sampler = lock.cast_sampler.clone();
         drop(lock);
 
-        Texture::load_from_file(self.clone(), &device, &queue, path)
+        Texture::load_from_file(self.clone(), &device, &queue, &cast_layout, &cast_sampler, path)
     }
 
     pub fn create_sampler(&self, address_mode: AddressMode, filter_mode: FilterMode) -> Sampler {
@@ -332,7 +424,12 @@ impl Renderer {
             }
             None => {
                 let device = this.device.clone();
+                let queue = this.queue.clone();
                 let camera = this.camera.clone();
+                let cast_bind_group_layout = this.cast_bind_group_layout.clone();
+                let cast_render_pipeline = this.cast_render_pipeline.clone();
+                let cast_shader = this.cast_sampler.clone();
+
                 let textures = pipeline.textures();
                 let sampler = pipeline.sampler();
                 let atlas_collection = this.mesh_atlas_collection
@@ -340,7 +437,41 @@ impl Renderer {
                     .or_insert(LinkedList::new());
 
                 let housed_textures: Vec<HousedTexture> = textures.iter().map(|texture| {
-                    cloned.handle_new_instance_texture(atlas_collection, &device, texture.clone())
+                    let housed_texture = cloned.handle_new_instance_texture(atlas_collection, &device,
+                                                                            &cast_bind_group_layout, &cast_shader, texture.clone());
+                    // Render the texture to the atlas.
+                    let mut encoder = device.create_command_encoder(&Default::default());
+                    {
+                        let mut r_pass =
+                            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: None,
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &housed_texture.atlas.view(),
+                                    ops: Operations {
+                                        load: LoadOp::Load,
+                                        store: StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                    resolve_target: None,
+                                })],
+                                depth_stencil_attachment: None,
+                                occlusion_query_set: None,
+                                timestamp_writes: None,
+                            });
+                        r_pass.set_pipeline(&cast_render_pipeline);
+                        r_pass.set_bind_group(0, Some(&texture.bind_group()), &[]);
+                        // r_pass.set_viewport();
+                        let x = housed_texture.allocation.rectangle.min.x as _;
+                        let y = housed_texture.allocation.rectangle.min.y as _;
+                        let w = housed_texture.allocation.rectangle.max.x as u32 - x;
+                        let h = housed_texture.allocation.rectangle.max.y as u32 - y;
+                        r_pass.set_scissor_rect(x, y, w, h);
+                        r_pass.draw(0..3, 0..1);
+                    }
+                    let i = queue.submit(Some(encoder.finish()));
+                    device.poll(PollType::WaitForSubmissionIndex(i)).unwrap();
+
+                    housed_texture
                 }).collect();
                 let textures: Vec<Texture> = housed_textures
                     .iter()
@@ -406,6 +537,8 @@ impl Renderer {
         &mut self,
         atlas_collection: &mut LinkedList<TextureAtlas>,
         device: &Device,
+        bind_group_layout: &BindGroupLayout,
+        sampler: &wgpu::Sampler,
         texture: Texture
     ) -> HousedTexture {
         let width = texture.width();
@@ -417,7 +550,7 @@ impl Renderer {
             if allocation.is_some() {
                 return HousedTexture {
                     atlas: atlas.texture.clone(),
-                    _allocation: allocation.unwrap(),
+                    allocation: allocation.unwrap(),
                 };
             }
         }
@@ -425,6 +558,8 @@ impl Renderer {
         let new_texture = Texture::empty(
             self.clone(),
             device,
+            bind_group_layout,
+            sampler,
             MAX_TEXTURE_SIZE,
             MAX_TEXTURE_SIZE,
             TextureFormat::Rgba8Unorm,
@@ -443,7 +578,7 @@ impl Renderer {
 
         HousedTexture {
             atlas: new_texture,
-            _allocation: allocation,
+            allocation,
         }
     }
 }
@@ -458,7 +593,7 @@ struct InstancedRender {
 #[derive(Clone)]
 struct HousedTexture {
     atlas: Texture,
-    _allocation: Allocation
+    allocation: Allocation
 }
 
 struct TextureAtlas {
@@ -468,8 +603,11 @@ struct TextureAtlas {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::fs::DirEntry;
     use super::*;
     use std::mem::drop;
+    use rand::Rng;
 
     #[test]
     fn hello_world() {
@@ -566,5 +704,50 @@ mod tests {
         drop(i_triangle0);
         drop(i_triangle1);
         drop(s_triangle2);
+    }
+
+    #[test]
+    pub fn texture_atlas_test() {
+        let mut renderer = Renderer::new(512, 512, 1).unwrap();
+        let mut images = Vec::new();
+        while images.len() < 10 {
+            let image = create_random_image(&mut renderer);
+            if let Some(image) = image {
+                images.push(image);
+            }
+        }
+
+        let sampler = renderer.create_sampler(AddressMode::Repeat, FilterMode::Linear);
+
+        let render_pipeline = renderer.create_render_pipeline(
+            include_str!("shaders/bs_shader.wgsl"),
+            &images,
+            Some(sampler),
+            false,
+            false,
+            false,
+        );
+
+        let renderer_clone = renderer.clone();
+        let mut lock = renderer.0.lock().unwrap();
+        renderer_clone.handle_new_instance_render_pipeline(&mut lock, std::ptr::null(), render_pipeline);
+    }
+
+    fn create_random_image(renderer: &mut Renderer) -> Option<Texture> {
+        let directory = fs::read_dir("artwork").unwrap();
+        let mut rng = rand::rng();
+
+        let files: Vec<io::Result<DirEntry>> = directory.collect();
+        let r = rng.random_range(0..files.len());
+
+        let entry = &files[r];
+        if entry.is_ok() {
+            let path_str = String::from(entry.as_ref().unwrap().path().to_str().unwrap());
+            let path = Path::new(&path_str);
+            let image = renderer.load_texture_from_path(path).unwrap();
+            return Some(image);
+        }
+
+        None
     }
 }

@@ -1,10 +1,11 @@
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) texture_coords: vec4<f32>,
+    @location(0) texture_coords: vec2<f32>,
 }
 
-@group(0) @binding(0) var texture_sampler: sampler;
-@group(0) @binding(1) var texture: texture_2d<f32>;
+@group(0) @binding(0) var texture: texture_2d<f32>;
+@group(0) @binding(1) var texture_sampler: sampler;
+
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -17,7 +18,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     let uv_x = (x + 1.0) * 0.25;  // Map [-1,3] to [0,1]
     let uv_y = (y + 1.0) * 0.25;  // Map [-1,3] to [0,1]
     
-    output.texture_coords = vec4<f32>(uv_x, uv_y, 0.0, 0.0);
+    output.texture_coords = vec2<f32>(uv_x, uv_y);
     return output;
 }
 
