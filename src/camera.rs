@@ -112,6 +112,9 @@ impl Camera {
     }
 }
 
+unsafe impl Sync for Camera {}
+unsafe impl Send for Camera {}
+
 impl RenderTarget for Camera {
     fn color_target_states(&self) -> Vec<Option<ColorTargetState>> {
         let lock = self.0.lock().unwrap();
