@@ -37,6 +37,7 @@ pub mod texture;
 pub mod render_pipeline;
 pub mod render_target;
 pub mod sampler;
+mod instanced_render;
 
 const MAX_TEXTURE_SIZE: u32 = 2048;
 const MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
@@ -57,7 +58,7 @@ static INSTANCE :LazyLock<Instance> = LazyLock::new(|| {
 });
 
 struct RendererInner {
-    adapter: Adapter,
+    _adapter: Adapter,
     device: Device,
     queue: Queue,
     buffers: usize,
@@ -68,7 +69,7 @@ struct RendererInner {
 
     // Final / Main output
     camera: Camera,
-    position: Box<Vector3<f32>>,
+    _position: Box<Vector3<f32>>,
     pitch: Box<f32>,
     yaw: Box<f32>,
     roll: Box<f32>,
@@ -79,7 +80,6 @@ struct RendererInner {
         *const c_void,
         HashMap<*const c_void, HousedTexture>
     >,
-    mesh_atlas_collection: HashMap<*const c_void, LinkedList<TextureAtlas>>,
     mesh_housed_texture_collection: HashMap<*const c_void, HashMap<*const c_void, HousedTexture>>,
     mesh_render_pipeline_collection: HashMap<*const c_void, WeakRenderPipeline>,
     mesh_instanced_renders: HashMap<*const c_void, HashMap<*const c_void, InstancedRender>>,
@@ -132,13 +132,13 @@ impl Renderer {
             device.create_sampler(&SamplerDescriptor::default());
 
         let inner = RendererInner {
-            adapter,
+            _adapter: adapter,
             device,
             queue,
             buffers,
 
             camera,
-            position,
+            _position: position,
             pitch,
             yaw,
             roll,
@@ -152,7 +152,6 @@ impl Renderer {
             mesh_texture_collection: Default::default(),
             mesh_render_pipeline_collection: Default::default(),
             mesh_housed_texture_collection: Default::default(),
-            mesh_atlas_collection: Default::default(),
 
             independent_renders: Default::default(),
             mesh_instanced_renders: Default::default(),
@@ -426,18 +425,18 @@ impl Renderer {
         let sampler = pipeline.sampler();
 
         let housed_textures: Vec<HousedTexture> = textures.iter().map(|texture| {
-            let housed_texture = cloned
-                .handle_new_instance_texture(this,
-                                             &device,
-                                             &cast_bind_group_layout,
-                                             mesh_address,
-                                             &cast_shader,
-                                             texture.clone());
-
+            // let housed_texture = cloned
+            //     .handle_new_instance_texture(this,
+            //                                  &device,
+            //                                  &cast_bind_group_layout,
+            //                                  mesh_address,
+            //                                  &cast_shader,
+            //                                  texture.clone());
             // Render the texture to the atlas.
-            Self::cast_texture_to_atlas(&device, &queue, &cast_render_pipeline, texture, &housed_texture);
+            // Self::cast_texture_to_atlas(&device, &queue, &cast_render_pipeline, texture, &housed_texture);
 
-            housed_texture
+            // housed_texture
+            todo!()
         }).collect();
 
 
@@ -498,118 +497,6 @@ impl Renderer {
         instanced_renders.insert(pipeline_address, instanced_render);
     }
 
-    fn cast_texture_to_atlas(device: &Device, queue: &Queue, cast_render_pipeline: &wgpu::RenderPipeline, texture: &Texture, housed_texture: &HousedTexture) {
-        let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut r_pass =
-                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &housed_texture.atlas.view(),
-                        ops: Operations {
-                            load: LoadOp::Load,
-                            store: StoreOp::Store,
-                        },
-                        depth_slice: None,
-                        resolve_target: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
-            r_pass.set_pipeline(&cast_render_pipeline);
-            r_pass.set_bind_group(0, Some(&texture.bind_group()), &[]);
-            let x = housed_texture.allocation.rectangle.min.x as u32;
-            let y = housed_texture.allocation.rectangle.min.y as u32;
-            let w = housed_texture.allocation.rectangle.max.x as u32 - x;
-            let h = housed_texture.allocation.rectangle.max.y as u32 - y;
-            r_pass.set_scissor_rect(x, y, w, h);
-            r_pass.set_viewport(
-                x as _, y as _,
-                texture.width() as _,
-                texture.height() as _,
-                0.0, 1.0
-            );
-            r_pass.draw(0..3, 0..1);
-        }
-        let _ = queue.submit(Some(encoder.finish()));
-        //device.poll(PollType::WaitForSubmissionIndex(i)).unwrap();
-    }
-
-    fn handle_new_instance_texture(
-        &mut self,
-        this: &mut MutexGuard<RendererInner>,
-        device: &Device,
-        bind_group_layout: &BindGroupLayout,
-        mesh_address: *const c_void,
-        sampler: &wgpu::Sampler,
-        texture: Texture
-    ) -> HousedTexture {
-        let texture_address = texture.inner.as_ref() as *const _ as *const c_void;
-
-        let housed_texture_collection = this.mesh_housed_texture_collection
-            .entry(mesh_address)
-            .or_insert(HashMap::new());
-
-        if let Some(housed_texture) = housed_texture_collection.get_mut(&texture_address) {
-            return housed_texture.clone();
-        }
-
-        let atlas_collection = this.mesh_atlas_collection
-            .entry(mesh_address)
-            .or_insert(LinkedList::new());
-
-        let width = texture.width();
-        let height = texture.height();
-        for atlas in atlas_collection.into_iter() {
-            let allocation = atlas.allocator.allocate(size2(
-                width as _, height as _
-            ));
-            if allocation.is_some() {
-                let res = HousedTexture {
-                    atlas: atlas.texture.clone(),
-                    allocation: allocation.unwrap(),
-                };
-                this.mesh_housed_texture_collection
-                    .get_mut(&mesh_address)
-                    .unwrap()
-                    .insert(texture_address, res.clone());
-                return res;
-            }
-        }
-
-        let new_texture = Texture::empty(
-            self.clone(),
-            device,
-            bind_group_layout,
-            sampler,
-            MAX_TEXTURE_SIZE,
-            MAX_TEXTURE_SIZE,
-            TextureFormat::Rgba8Unorm,
-        );
-        let mut allocator = AtlasAllocator::new(size2(
-            MAX_TEXTURE_SIZE as _, MAX_TEXTURE_SIZE as _
-        ));
-        let allocation = allocator.allocate(size2(
-            width as _, height as _
-        )).unwrap();
-
-        atlas_collection.push_front(TextureAtlas {
-            texture: new_texture.clone(),
-            allocator,
-        });
-
-        let res = HousedTexture {
-            atlas: new_texture,
-            allocation,
-        };
-
-        this.mesh_housed_texture_collection
-            .get_mut(&mesh_address)
-            .unwrap()
-            .insert(texture_address, res.clone());
-        res
-    }
 }
 
 #[derive(Clone)]
@@ -625,21 +512,12 @@ struct HousedTexture {
     allocation: Allocation
 }
 
-struct TextureAtlas {
-    allocator: AtlasAllocator,
-    texture: Texture,
-}
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::fs::DirEntry;
     use super::*;
     use std::mem::drop;
-    use std::sync::mpsc::channel;
-    use image::{ColorType, ExtendedColorType, ImageReader, RgbaImage};
-    use rand::Rng;
-    use wgpu::MapMode;
+    use image::RgbaImage;
 
     #[test]
     fn hello_world() {
@@ -736,129 +614,5 @@ mod tests {
         drop(i_triangle0);
         drop(i_triangle1);
         drop(s_triangle2);
-    }
-
-    #[test]
-    pub fn texture_atlas_test() {
-        let mut renderer = Renderer::new(512, 512, 1).unwrap();
-
-        let mut render_pipelines = Vec::with_capacity(512);
-        let sampler = renderer.create_sampler(AddressMode::Repeat, FilterMode::Linear);
-        for i in 0..render_pipelines.capacity() {
-            let mut images = Vec::with_capacity(16);
-            while images.len() < images.capacity() {
-                let image = create_random_image(&mut renderer);
-                if let Some(image) = image {
-                    images.push(image);
-                }
-            }
-
-            let render_pipeline = renderer.create_render_pipeline(
-                include_str!("shaders/bs_shader.wgsl"),
-                &images,
-                Some(sampler.clone()),
-                false,
-                false,
-                false,
-            );
-
-            let renderer_clone = renderer.clone();
-            let mut lock = renderer.0.lock().unwrap();
-            renderer_clone.handle_new_instance_render_pipeline(&mut lock, std::ptr::null(), render_pipeline.clone());
-
-            render_pipelines.push(render_pipeline.clone());
-        }
-
-        let lock = renderer.0.lock().unwrap();
-
-        let device = lock.device.clone();
-        let queue = lock.queue.clone();
-        device.poll(PollType::Wait).unwrap();
-
-        let atlas_collection =
-            lock.mesh_atlas_collection.get(&std::ptr::null()).unwrap();
-
-        output_atlases(&device, &queue, atlas_collection);
-    }
-
-    fn output_atlases(device: &Device, queue: &Queue, atlas_collection: &LinkedList<TextureAtlas>) {
-        // Create a folder if needed
-        fs::create_dir_all("./atlas/").unwrap();
-        let mut receivers = Vec::new();
-        for (i, atlas) in atlas_collection.iter().enumerate() {
-            let texture = atlas.texture.clone();
-
-            let buffer = texture.write_to_new_buffer(&device, &queue);
-            let buffer_cloned = buffer.clone();
-
-            let color_type = format_to_color_type(texture.format());
-
-            let width = texture.width() as u64;
-            let height = texture.height() as u64;
-            let bytes_per_pixel = color_type.bytes_per_pixel() as u64;
-            let size = width * height * bytes_per_pixel;
-
-            let (sender, receiver) = channel();
-            buffer.map_async(MapMode::Read, 0..size, move |r| {
-                if r.is_ok() {
-                    let path = format!("atlas/{}.png", i);
-                    let path = Path::new(&path);
-                    let data = buffer_cloned.get_mapped_range(0..size);
-                    image::save_buffer(path, data.iter().as_ref(), texture.width(), texture.height(), ExtendedColorType::from(color_type)).unwrap();
-                }
-
-                sender.send(r).unwrap();
-            });
-            receivers.push((receiver, buffer));
-        }
-
-        device.poll(PollType::Wait).unwrap();
-        for (r, buffer) in receivers {
-            r.recv().unwrap().unwrap();
-            buffer.unmap();
-        }
-    }
-
-    static RANDOM_TEXTURES: LazyLock<Mutex<HashMap<String, Texture>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-
-    fn create_random_image(renderer: &mut Renderer) -> Option<Texture> {
-        let directory = fs::read_dir("artwork").unwrap();
-        let mut rng = rand::rng();
-
-        let files: Vec<io::Result<DirEntry>> = directory.collect();
-        let r = rng.random_range(0..files.len());
-
-        let entry = &files[r];
-        if entry.is_ok() {
-            let path_str = String::from(entry.as_ref().unwrap().path().to_str().unwrap());
-            let path = Path::new(&path_str);
-
-            let mut lock = RANDOM_TEXTURES.lock().unwrap();
-            return match lock.get(&path_str) {
-                Some(texture) => Some(texture.clone()),
-                None => {
-                    let image = renderer.load_texture_from_path(path).unwrap();
-                    lock.insert(path_str, image.clone());
-                    Some(image)
-                }
-            }
-        }
-
-        None
-    }
-
-    fn format_to_color_type(format: TextureFormat) -> ColorType {
-        match format {
-            TextureFormat::R8Unorm => ColorType::L8,
-            TextureFormat::Rg8Unorm => ColorType::Rgb8,
-            TextureFormat::R16Unorm => ColorType::L16,
-            TextureFormat::Rgba8Unorm => ColorType::Rgba8,
-            TextureFormat::Rg16Unorm => ColorType::Rgb16,
-            TextureFormat::Rgba16Unorm => ColorType::Rgba16,
-            TextureFormat::Rgba32Float => ColorType::Rgba32F,
-
-            _ => unimplemented!(),
-        }
     }
 }

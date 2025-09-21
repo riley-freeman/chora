@@ -1,21 +1,28 @@
+use std::collections::HashMap;
 use std::io;
+use std::mem::transmute;
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 use cgmath::num_traits::FromPrimitive;
+use etagere::{size2, AllocId, Allocation, AtlasAllocator, Rectangle};
+use etagere::euclid::{Point2D, Rect};
 use image::{DynamicImage, GenericImageView};
 use image::ImageReader;
 use image::ColorType;
-
+use max_rects::bucket::Bucket;
+use max_rects::max_rects::MaxRects;
+use max_rects::packing_box::PackingBox;
 use rayon::prelude::*;
 
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayout, Buffer, BufferAddress, BufferUsages, ColorWrites, Device, Extent3d, Origin3d, Queue, Sampler, SubmissionIndex, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureView};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BufferAddress, BufferUsages, ColorWrites, Device, Extent3d, LoadOp, Operations, Origin3d, Queue, StoreOp, SubmissionIndex, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureView};
 use wgpu::TextureDescriptor;
 use wgpu::TextureDimension;
 use wgpu::TextureFormat;
-use wgpu::wgt::{PollType, TextureDataOrder};
+use wgpu::wgt::{TextureDataOrder};
 use wgpu::util::DeviceExt;
 use crate::render_target::RenderTarget;
-use crate::Renderer;
+use crate::{HousedTexture, Renderer, MAX_TEXTURE_SIZE};
+use crate::linked_list::LinkedList;
 
 pub(crate) struct TextureInner {
     texture: wgpu::Texture,
@@ -322,5 +329,365 @@ fn create_new_texture_desc<'a>(width: u32, height: u32, format: TextureFormat) -
         sample_count: 1,
         mip_level_count: 1,
         view_formats: &[]
+    }
+}
+
+pub struct Spritesheet {
+    inner: Arc<Mutex<SpritesheetInner>>,
+}
+
+struct SpritesheetInner {
+    pub(crate) textures: Vec<Texture>,
+    pub(crate) shelf_allocators: Vec<AtlasAllocator>,
+
+    pub(crate) texture_mappings: HashMap<*const TextureInner, (usize, Allocation)>,
+
+    renderer: Renderer,
+}
+
+pub struct Sprite {
+    pub(crate) spritesheet: Texture,
+    pub(crate) scissor: Rectangle,
+}
+
+impl Spritesheet {
+    pub fn new(renderer: Renderer) -> Self {
+        let inner = SpritesheetInner {
+            textures: Vec::new(),
+            shelf_allocators: Vec::new(),
+            texture_mappings: HashMap::new(),
+            renderer
+        };
+        Self {
+            inner: Arc::new(Mutex::new(inner))
+        }
+    }
+
+    pub fn add_texture(&self, texture: &[Texture]) -> Vec<Sprite> {
+        let mut res = Vec::with_capacity(texture.len());
+        for t in texture {
+            let sprite = self.allocate(&t);
+            res.push(sprite);
+        }
+        // let lock = self.inner.lock().unwrap();
+        //let renderer = lock.renderer.0.lock().unwrap();
+
+        // cast_texture_to_atlas(
+        //     &renderer.device,
+        //     &renderer.queue,
+        //     &renderer.cast_render_pipeline,
+        //     &texture,
+        //     &sprite.spritesheet,
+        //     &sprite.scissor
+        // );
+
+        self.convert_to_max_rects();
+
+        res
+    }
+
+    fn allocate(&self, texture: &Texture) -> Sprite {
+        let texture_address = texture.inner.as_ref() as *const _;
+
+        let mut lock = self.inner.lock().unwrap();
+        if let Some((index, scissor)) = lock.texture_mappings.get(&texture_address) {
+            return Sprite {
+                spritesheet: lock.textures[*index].clone(),
+                scissor: scissor.rectangle,
+            }
+        }
+
+        let width = texture.width();
+        let height = texture.height();
+
+        for (i, allocator) in lock.shelf_allocators.iter_mut().enumerate() {
+            let alloc = allocator.allocate(size2(
+                width as _, height as _
+            ));
+
+            if let Some(alloc) = alloc {
+                lock.texture_mappings.insert(texture_address, (i, alloc));
+                return Sprite {
+                    spritesheet: lock.textures[i].clone(),
+                    scissor: alloc.rectangle,
+                };
+            }
+        }
+
+
+        let renderer = &lock.renderer;
+
+        let spritesheet = renderer.create_texture(
+            MAX_TEXTURE_SIZE,
+            MAX_TEXTURE_SIZE,
+            TextureFormat::Rgba8Unorm,
+            None,
+        );
+
+        let mut allocator = AtlasAllocator::new(size2(
+            MAX_TEXTURE_SIZE as _,
+            MAX_TEXTURE_SIZE as _,
+        ));
+
+        let alloc = allocator.allocate(size2(
+            width as _, height as _,
+        )).unwrap();
+
+        let texture_len = lock.textures.len();
+        lock.textures.push(spritesheet.clone());
+        lock.shelf_allocators.push(allocator);
+
+        lock.texture_mappings.insert(texture_address, (texture_len, alloc));
+
+
+
+        Sprite {
+            spritesheet,
+            scissor: alloc.rectangle,
+        }
+    }
+
+    fn convert_to_max_rects(&self) {
+        // TODO: MAKE THIS ASYNC
+        let mut lock = self.inner.lock().unwrap();
+
+        let mut boxes = Vec::with_capacity(lock.texture_mappings.len());
+        let mut textures = HashMap::new();
+        for (addr, _) in lock.texture_mappings.iter() {
+            let texture_inner = unsafe { &*(*addr) };
+            let width = texture_inner.width();
+            let height = texture_inner.height();
+            boxes.push(PackingBox::new(
+                width as _,
+                height as _,
+            ));
+            textures.entry((width, height)).or_insert(LinkedList::new());
+            textures.get_mut(&(width, height)).unwrap().push_back(texture_inner);
+        }
+
+        let mut i = 1;
+        let mut bins = Vec::new();
+        let placed = loop {
+            bins.push(Bucket::new(
+                MAX_TEXTURE_SIZE as _,
+                MAX_TEXTURE_SIZE as _,
+                0,
+                0,
+                i
+            ));
+
+            let mut problem = MaxRects::new(boxes.clone(), bins.clone());
+            let (placed, remaining, _) = problem.place();
+            if remaining.is_empty() {
+                break placed;
+            }
+
+            i += 1;
+        };
+
+        // Create the Textures
+        let mut atlases = Vec::with_capacity(bins.len());
+        for _ in 0..bins.len() {
+            let sheet = lock.renderer.create_texture(
+                MAX_TEXTURE_SIZE,
+                MAX_TEXTURE_SIZE,
+                TextureFormat::Rgba8Unorm,
+                None,
+            );
+            atlases.push(sheet);
+        }
+
+        lock.texture_mappings.clear();
+        let renderer = lock.renderer.0.lock().unwrap();
+        let device = renderer.device.clone();
+        let queue = renderer.queue.clone();
+        let cast_render_pipeline = renderer.cast_render_pipeline.clone();
+        drop(renderer);
+
+        for (i, alloc) in placed.iter().enumerate() {
+            let bucket_id = alloc.bucketid.unwrap() as usize;
+            let atlas = &atlases[bucket_id - 1];
+
+            let rect = Rectangle::new(
+                Point2D::new(alloc.originx.unwrap(), alloc.originy.unwrap()),
+                Point2D::new(alloc.originx.unwrap() + alloc.width, alloc.originy.unwrap() + alloc.height),
+            );
+
+            let texture = textures.get_mut(&(alloc.width as _, alloc.height as _))
+                .unwrap()
+                .pop_front()
+                .unwrap();
+
+            lock.texture_mappings.insert(texture as *const _, (bucket_id - 1, Allocation {
+                rectangle: rect,
+                id: unsafe{ transmute(0) },
+            }));
+
+            cast_texture_to_atlas(&device, &queue, &cast_render_pipeline, texture, atlas, &rect);
+        }
+
+        lock.shelf_allocators = Vec::new();
+        lock.textures = atlases;
+    }
+}
+
+fn cast_texture_to_atlas(device: &Device, queue: &Queue, cast_render_pipeline: &wgpu::RenderPipeline, src: &TextureInner, dest: &Texture, scissor: &Rectangle) {
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut r_pass =
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dest.view(),
+                    ops: Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                    resolve_target: None,
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+        r_pass.set_pipeline(&cast_render_pipeline);
+        r_pass.set_bind_group(0, Some(&src.bind_group), &[]);
+        let x = scissor.min.x as u32;
+        let y = scissor.min.y as u32;
+        let w = scissor.max.x as u32 - x;
+        let h = scissor.max.y as u32 - y;
+        r_pass.set_scissor_rect(x, y, w, h);
+        r_pass.set_viewport(
+            x as _, y as _,
+            w as _, h as _,
+            0.0, 1.0
+        );
+        r_pass.draw(0..3, 0..1);
+    }
+    let _ = queue.submit(Some(encoder.finish()));
+    //device.poll(PollType::WaitForSubmissionIndex(i)).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, io};
+    use std::collections::HashMap;
+    use std::fs::DirEntry;
+    use std::path::Path;
+    use std::sync::{LazyLock, Mutex};
+    use std::sync::mpsc::channel;
+    use image::{ColorType, ExtendedColorType};
+    use rand::Rng;
+    use wgpu::{Device, MapMode, Queue, TextureFormat};
+    use wgpu::wgt::PollType;
+    use crate::Renderer;
+    use crate::texture::Texture;
+
+    #[test]
+    fn group_random_textures() {
+        let mut renderer = Renderer::new(512, 512, 1).unwrap();
+
+
+        let spritesheet = crate::texture::Spritesheet::new(renderer.clone());
+
+        for _ in 0..16 {
+            let mut images = Vec::with_capacity(16);
+            while images.len() < images.capacity() {
+                let image = create_random_image(&mut renderer);
+                if let Some(image) = image {
+                    images.push(image);
+                }
+            }
+            spritesheet.add_texture(&images);
+        }
+
+        let lock = renderer.0.lock().unwrap();
+
+        let device = lock.device.clone();
+        let queue = lock.queue.clone();
+        device.poll(PollType::Wait).unwrap();
+
+
+        output_atlases(&device, &queue, spritesheet.inner.lock().unwrap().textures.as_slice());
+    }
+
+    static RANDOM_TEXTURES: LazyLock<Mutex<HashMap<String, Texture>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    fn create_random_image(renderer: &mut Renderer) -> Option<Texture> {
+        let directory = fs::read_dir("artwork").unwrap();
+        let mut rng = rand::rng();
+
+        let files: Vec<io::Result<DirEntry>> = directory.collect();
+        let r = rng.random_range(0..files.len());
+
+        let entry = &files[r];
+        if entry.is_ok() {
+            let path_str = String::from(entry.as_ref().unwrap().path().to_str().unwrap());
+            let path = Path::new(&path_str);
+
+            let mut lock = RANDOM_TEXTURES.lock().unwrap();
+            return match lock.get(&path_str) {
+                Some(texture) => Some(texture.clone()),
+                None => {
+                    let image = renderer.load_texture_from_path(path).unwrap();
+                    lock.insert(path_str, image.clone());
+                    Some(image)
+                }
+            }
+        }
+
+        None
+    }
+
+    fn output_atlases(device: &Device, queue: &Queue, textures: &[Texture]) {
+        // Create a folder if needed
+        fs::create_dir_all("./atlas/").unwrap();
+        let mut receivers = Vec::new();
+        for (i, atlas) in textures.iter().enumerate() {
+            let texture = atlas.clone();
+
+            let buffer = texture.write_to_new_buffer(&device, &queue);
+            let buffer_cloned = buffer.clone();
+
+            let color_type = format_to_color_type(texture.format());
+
+            let width = texture.width() as u64;
+            let height = texture.height() as u64;
+            let bytes_per_pixel = color_type.bytes_per_pixel() as u64;
+            let size = width * height * bytes_per_pixel;
+
+            let (sender, receiver) = channel();
+            buffer.map_async(MapMode::Read, 0..size, move |r| {
+                if r.is_ok() {
+                    let path = format!("atlas/{}.png", i);
+                    let path = Path::new(&path);
+                    let data = buffer_cloned.get_mapped_range(0..size);
+                    image::save_buffer(path, data.iter().as_ref(), texture.width(), texture.height(), ExtendedColorType::from(color_type)).unwrap();
+                }
+
+                sender.send(r).unwrap();
+            });
+            receivers.push((receiver, buffer));
+        }
+
+        device.poll(PollType::Wait).unwrap();
+        for (r, buffer) in receivers {
+            r.recv().unwrap().unwrap();
+            buffer.unmap();
+        }
+    }
+
+    fn format_to_color_type(format: TextureFormat) -> ColorType {
+        match format {
+            TextureFormat::R8Unorm => ColorType::L8,
+            TextureFormat::Rg8Unorm => ColorType::Rgb8,
+            TextureFormat::R16Unorm => ColorType::L16,
+            TextureFormat::Rgba8Unorm => ColorType::Rgba8,
+            TextureFormat::Rg16Unorm => ColorType::Rgb16,
+            TextureFormat::Rgba16Unorm => ColorType::Rgba16,
+            TextureFormat::Rgba32Float => ColorType::Rgba32F,
+
+            _ => unimplemented!(),
+        }
     }
 }
