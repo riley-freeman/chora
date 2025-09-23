@@ -10,6 +10,7 @@ use image::{DynamicImage, GenericImageView};
 use image::ImageReader;
 use image::ColorType;
 use max_rects::bucket::Bucket;
+use max_rects::calculate_packed_percentage;
 use max_rects::max_rects::MaxRects;
 use max_rects::packing_box::PackingBox;
 use rayon::prelude::*;
@@ -367,21 +368,25 @@ impl Spritesheet {
         let mut res = Vec::with_capacity(texture.len());
         for t in texture {
             let sprite = self.allocate(&t);
+
+            let lock = self.inner.lock().unwrap();
+            let renderer = lock.renderer.0.lock().unwrap();
+
+            let texture_addr = sprite.spritesheet.inner.as_ref();
+
+            cast_texture_to_atlas(
+                &renderer.device,
+                &renderer.queue,
+                &renderer.cast_render_pipeline,
+                texture_addr,
+                &sprite.spritesheet,
+                &sprite.scissor
+            );
             res.push(sprite);
         }
-        // let lock = self.inner.lock().unwrap();
-        //let renderer = lock.renderer.0.lock().unwrap();
 
-        // cast_texture_to_atlas(
-        //     &renderer.device,
-        //     &renderer.queue,
-        //     &renderer.cast_render_pipeline,
-        //     &texture,
-        //     &sprite.spritesheet,
-        //     &sprite.scissor
-        // );
 
-        self.convert_to_max_rects();
+        // self.convert_to_max_rects();
 
         res
     }
@@ -465,16 +470,21 @@ impl Spritesheet {
             textures.get_mut(&(width, height)).unwrap().push_back(texture_inner);
         }
 
-        let mut i = 1;
-        let mut bins = Vec::new();
+        let pp = calculate_packed_percentage(&boxes, &[Bucket::new(
+            MAX_TEXTURE_SIZE as _,
+            MAX_TEXTURE_SIZE as _,
+            0, 0, 1
+        )]);
+
+        // Initialize the first bins via estimating how much over we go.
+        let mut bins = Vec::with_capacity((pp / 100.0) as usize);
+        for i in 0..bins.capacity() {
+            Self::push_new_bin(&mut bins, i);
+        }
+
+        let mut i = bins.len();
         let placed = loop {
-            bins.push(Bucket::new(
-                MAX_TEXTURE_SIZE as _,
-                MAX_TEXTURE_SIZE as _,
-                0,
-                0,
-                i
-            ));
+            Self::push_new_bin(&mut bins, i);
 
             let mut problem = MaxRects::new(boxes.clone(), bins.clone());
             let (placed, remaining, _) = problem.place();
@@ -528,6 +538,15 @@ impl Spritesheet {
 
         lock.shelf_allocators = Vec::new();
         lock.textures = atlases;
+    }
+
+    fn push_new_bin(bins: &mut Vec<Bucket>, i: usize) {
+        bins.push(Bucket::new(
+            MAX_TEXTURE_SIZE as _,
+            MAX_TEXTURE_SIZE as _,
+            0, 0,
+            i as i32 + 1
+        ))
     }
 }
 
