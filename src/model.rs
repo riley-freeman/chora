@@ -55,6 +55,10 @@ impl Model {
             inner: Arc::new(inner),
         }
     }
+
+    pub fn meshes(&self) -> &[Mesh] {
+        &self.inner.meshes
+    }
 }
 
 impl<'a> IntoIterator for &'a Model {

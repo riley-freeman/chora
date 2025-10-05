@@ -1,4 +1,4 @@
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, MutexGuard, Weak};
 use std::sync::Mutex;
 
 use wgpu::{BindGroup, BindGroupLayout, Device, FragmentState, TextureView};
@@ -13,9 +13,9 @@ use crate::sampler::Sampler;
 use crate::texture::Texture;
 
 pub(crate) struct RenderPipelineInner {
-    textures: Vec<Texture>,
-    sampler: Option<Sampler>,
-    shader_code: String,
+    pub(crate) textures: Vec<Texture>,
+    pub(crate) sampler: Option<Sampler>,
+    pub(crate) shader_code: String,
 
     uniform_bind_group_layout: wgpu::BindGroupLayout,
     texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -212,6 +212,10 @@ impl RenderPipeline {
 
     pub fn downgrade(&self) -> WeakRenderPipeline {
         WeakRenderPipeline(Arc::downgrade(&self.inner))
+    }
+
+    pub fn lock(&self) -> MutexGuard<RenderPipelineInner> {
+        self.inner.lock().unwrap()
     }
 
     pub fn textures<'a>(&self) -> Vec<Texture> {

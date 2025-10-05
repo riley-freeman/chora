@@ -1,5 +1,6 @@
 use std::slice;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::sync::Weak;
 use wgpu::{BufferUsages, Device};
@@ -24,12 +25,15 @@ impl Drop for MeshInner {
 
 pub struct Mesh {
     pub(crate) inner: Arc<Mutex<MeshInner>>,
+    pub(crate) added: AtomicBool,
 }
+
 #[derive(Debug, Clone)]
 pub struct WeakMesh(Weak<Mutex<MeshInner>>);
 
 impl Drop for Mesh {
     fn drop(&mut self) {
+        if !self.added.load(Ordering::Relaxed) { return; }
         let renderer = {
             let lock = self.inner.lock().unwrap();
             lock.renderer.clone()
@@ -64,6 +68,7 @@ impl Mesh {
 
         Self {
             inner: Arc::new(Mutex::new(inner)),
+            added: AtomicBool::new(false),
         }
     }
 
@@ -76,3 +81,4 @@ impl Mesh {
         WeakMesh(Arc::downgrade(&self.inner))
     }
 }
+
