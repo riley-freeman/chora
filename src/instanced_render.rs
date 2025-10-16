@@ -27,13 +27,9 @@ impl InstancedRender {
         Self {
             _renderer: renderer.clone(),
             render_pipelines: Default::default(),
-            spritesheet: Spritesheet::new(
+            spritesheet: Spritesheet::new_lock(
                 renderer,
-                &r_inner.device,
-                &r_inner.queue,
-                &r_inner.cast_bind_group_layout,
-                &r_inner.cast_render_pipeline,
-                &r_inner.cast_sampler,
+                r_inner
             ),
 
             count: 0,

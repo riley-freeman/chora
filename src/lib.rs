@@ -321,20 +321,10 @@ impl Renderer {
         &self,
     ) -> Spritesheet {
         let lock = self.0.lock().unwrap();
-        let device = lock.device.clone();
-        let queue = lock.queue.clone();
-        let cast_layout = lock.cast_bind_group_layout.clone();
-        let cast_render_pipeline = lock.cast_render_pipeline.clone();
-        let cast_sampler = lock.cast_sampler.clone();
-        drop(lock);
 
-        Spritesheet::new(
+        Spritesheet::new_lock(
             self.clone(),
-            &device,
-            &queue,
-            &cast_layout,
-            &cast_render_pipeline,
-            &cast_sampler,
+            &lock
         )
     }
 

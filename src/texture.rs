@@ -413,14 +413,15 @@ pub struct Sprite {
 }
 
 impl Spritesheet {
-    pub fn new(
+    pub(crate) fn new_lock(
         renderer: Renderer,
-        device: &Device,
-        queue: &Queue,
-        cast_bind_group_layout: &BindGroupLayout,
-        cast_render_pipeline: &wgpu::RenderPipeline,
-        cast_sampler: &wgpu::Sampler,
+        renderer_inner: &RendererInner,
     ) -> Self {
+        let device = &renderer_inner.device;
+        let queue = &renderer_inner.queue;
+        let cast_bind_group_layout = &renderer_inner.cast_bind_group_layout;
+        let cast_render_pipeline = &renderer_inner.cast_render_pipeline;
+        let cast_sampler = &renderer_inner.cast_sampler;
         let inner = SpritesheetInner {
             textures: Vec::new(),
             shelf_allocators: Vec::new(),
