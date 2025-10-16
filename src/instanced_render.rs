@@ -1,6 +1,6 @@
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
-use crate::render_pipeline::RenderPipeline;
+use crate::render_pipeline::{RenderPipeline, RenderPipelineFlags};
 use crate::texture::{Spritesheet, TextureInner};
 use crate::{Renderer, RendererInner};
 use std::collections::HashSet;
@@ -72,9 +72,7 @@ impl InstancedRender {
                 &shader,
                 &textures,
                 sampler,
-                false,
-                false,
-                false,
+                RenderPipelineFlags::default(),
             );
 
             // Update the render pipeline
@@ -95,9 +93,7 @@ impl InstancedRender {
             &shader,
             &textures,
             sampler,
-            false,
-            false,
-            false,
+            RenderPipelineFlags::default(),
         );
         self.render_pipelines.push(new_rp);
         self.count += 1;

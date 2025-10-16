@@ -1,16 +1,25 @@
-use std::sync::{Arc, MutexGuard, Weak};
+use crate::render_target::RenderTarget;
+use crate::sampler::Sampler;
+use crate::texture::Texture;
+use bitflags::bitflags;
 use std::sync::Mutex;
-
-use wgpu::{BindGroup, BindGroupLayout, Device, FragmentState, TextureView};
+use std::sync::{Arc, MutexGuard, Weak};
 use wgpu::MultisampleState;
 use wgpu::PipelineLayoutDescriptor;
 use wgpu::PrimitiveState;
 use wgpu::RenderPipelineDescriptor;
 use wgpu::ShaderModuleDescriptor;
 use wgpu::VertexState;
-use crate::render_target::RenderTarget;
-use crate::sampler::Sampler;
-use crate::texture::Texture;
+use wgpu::{BindGroup, BindGroupLayout, Device, FragmentState, TextureView};
+
+bitflags! {
+    #[derive(Default, PartialEq, Eq, Clone, Copy, Debug)]
+    pub struct RenderPipelineFlags: u32 {
+        const ALLOW_WORLD_UNIFORM = 1;
+        const ALLOW_CAMERA_UNIFORM = 2;
+        const ALLOW_OBJECT_UNIFORM = 7; // We want to force world and camera uniforms if we're rendering objects
+    }
+}
 
 pub(crate) struct RenderPipelineInner {
     pub(crate) textures: Vec<Texture>,
@@ -40,18 +49,36 @@ impl RenderPipeline {
         shader: &str,
         textures: &[Texture],
         sampler: Option<Sampler>,
-        allow_world_uniform: bool,
-        allow_camera_uniform: bool,
-        allow_object_uniform: bool,
+        flags: RenderPipelineFlags,
     ) -> Self {
+        // Get the flag info (about the uniform buffers)
+        let allow_world_uniform = flags.contains(RenderPipelineFlags::ALLOW_WORLD_UNIFORM);
+        let allow_camera_uniform = flags.contains(RenderPipelineFlags::ALLOW_CAMERA_UNIFORM);
+        let allow_object_uniform = flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM);
+
         // Create the uniform bind group layout.
-        let uniform_bind_group_layout = Self::create_uniform_bind_group_layout(device, allow_world_uniform, allow_camera_uniform, allow_object_uniform);
+        let uniform_bind_group_layout = Self::create_uniform_bind_group_layout(
+            device,
+            allow_world_uniform,
+            allow_camera_uniform,
+            allow_object_uniform,
+        );
 
         // Create the texture bind group layout.
-        let texture_bind_group_layout = Self::create_texture_bind_group_layout(device, textures, &sampler);
+        let texture_bind_group_layout =
+            Self::create_texture_bind_group_layout(device, textures, &sampler);
 
-        let texture_views = textures.iter().map(|texture| texture.view()).collect::<Vec<_>>();
-        let texture_bind_group = Self::create_texture_bind_group(device, textures, &sampler, &texture_bind_group_layout, &texture_views);
+        let texture_views = textures
+            .iter()
+            .map(|texture| texture.view())
+            .collect::<Vec<_>>();
+        let texture_bind_group = Self::create_texture_bind_group(
+            device,
+            textures,
+            &sampler,
+            &texture_bind_group_layout,
+            &texture_views,
+        );
 
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
@@ -104,14 +131,20 @@ impl RenderPipeline {
         };
 
         Self {
-            inner: Arc::new(Mutex::new(inner))
+            inner: Arc::new(Mutex::new(inner)),
         }
     }
 
-    fn create_texture_bind_group(device: &Device, textures: &[Texture], sampler: &Option<Sampler>, texture_bind_group_layout: &BindGroupLayout, texture_views: &Vec<TextureView>) -> BindGroup {
-        let hal_sampler = sampler.as_ref().map(|s| {
-            s.inner.lock().unwrap().sampler.clone()
-        });
+    fn create_texture_bind_group(
+        device: &Device,
+        textures: &[Texture],
+        sampler: &Option<Sampler>,
+        texture_bind_group_layout: &BindGroupLayout,
+        texture_views: &Vec<TextureView>,
+    ) -> BindGroup {
+        let hal_sampler = sampler
+            .as_ref()
+            .map(|s| s.inner.lock().unwrap().sampler.clone());
 
         let mut texture_bind_group_entries = Vec::with_capacity(textures.len());
         for i in 0..textures.len() {
@@ -124,17 +157,21 @@ impl RenderPipeline {
             let binding = textures.len() as _;
             texture_bind_group_entries.push(wgpu::BindGroupEntry {
                 binding,
-                resource: wgpu::BindingResource::Sampler(sampler)
+                resource: wgpu::BindingResource::Sampler(sampler),
             })
         }
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &texture_bind_group_layout,
-            entries: &texture_bind_group_entries
+            entries: &texture_bind_group_entries,
         })
     }
 
-    fn create_texture_bind_group_layout(device: &Device, textures: &[Texture], sampler: &Option<Sampler>) -> BindGroupLayout {
+    fn create_texture_bind_group_layout(
+        device: &Device,
+        textures: &[Texture],
+        sampler: &Option<Sampler>,
+    ) -> BindGroupLayout {
         let mut texture_bind_group_layout_entries = Vec::with_capacity(textures.len());
 
         for i in 0..textures.len() {
@@ -146,7 +183,7 @@ impl RenderPipeline {
                     multisampled: false,
                     view_dimension: wgpu::TextureViewDimension::D2,
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                }
+                },
             });
         }
 
@@ -166,7 +203,12 @@ impl RenderPipeline {
         })
     }
 
-    fn create_uniform_bind_group_layout(device: &Device, allow_world_uniform: bool, allow_camera_uniform: bool, allow_object_uniform: bool) -> BindGroupLayout {
+    fn create_uniform_bind_group_layout(
+        device: &Device,
+        allow_world_uniform: bool,
+        allow_camera_uniform: bool,
+        allow_object_uniform: bool,
+    ) -> BindGroupLayout {
         let mut uniform_bind_group_layout_entries = Vec::new();
         if allow_world_uniform {
             uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
@@ -214,7 +256,7 @@ impl RenderPipeline {
         WeakRenderPipeline(Arc::downgrade(&self.inner))
     }
 
-    pub (crate) fn lock(&'_ self) -> MutexGuard<'_, RenderPipelineInner> {
+    pub(crate) fn lock(&'_ self) -> MutexGuard<'_, RenderPipelineInner> {
         self.inner.lock().unwrap()
     }
 
@@ -239,5 +281,3 @@ impl WeakRenderPipeline {
         self.0.upgrade().map(|inner| RenderPipeline { inner })
     }
 }
-
-

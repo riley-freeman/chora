@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
-use wgpu::{AddressMode, Device, FilterMode};
-use crate::Renderer;
+use wgpu::{AddressMode, FilterMode};
+use crate::{Renderer, RendererInner};
 
 pub(crate) struct SamplerInner {
     pub(crate) sampler: wgpu::Sampler,
@@ -13,7 +13,7 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn new(renderer: Renderer, device: &Device, address_mode: AddressMode, filter_mode: FilterMode) -> Self {
+    pub(crate) fn new_locked(renderer: Renderer, r_inner: &RendererInner, address_mode: AddressMode, filter_mode: FilterMode) -> Self {
         let desc = wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: address_mode,
@@ -24,8 +24,7 @@ impl Sampler {
             mipmap_filter: filter_mode,
             ..Default::default()
         };
-
-        let sampler = device.create_sampler(&desc);
+        let sampler = r_inner.device.create_sampler(&desc);
 
         let inner = SamplerInner {
             sampler,

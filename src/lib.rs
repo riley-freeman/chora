@@ -3,7 +3,7 @@ use crate::instanced_render::InstancedRender;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
 use crate::model::Model;
-use crate::render_pipeline::{RenderPipeline, WeakRenderPipeline};
+use crate::render_pipeline::{RenderPipeline, RenderPipelineFlags, WeakRenderPipeline};
 use crate::sampler::Sampler;
 use crate::texture::{Spritesheet, Texture};
 use cgmath::Vector3;
@@ -333,8 +333,8 @@ impl Renderer {
     }
 
     pub fn create_sampler(&self, address_mode: AddressMode, filter_mode: FilterMode) -> Sampler {
-        let device = self.0.lock().unwrap().device.clone();
-        Sampler::new(self.clone(), &device, address_mode, filter_mode)
+        let lock = self.0.lock().unwrap();
+        Sampler::new_locked(self.clone(), &lock, address_mode, filter_mode)
     }
 
     pub fn create_render_pipeline(
@@ -342,9 +342,7 @@ impl Renderer {
         code: &str,
         textures: &Vec<Texture>,
         sampler: Option<Sampler>,
-        allow_world_uniform: bool,
-        allow_camera_uniform: bool,
-        allow_object_uniform: bool,
+        flags: RenderPipelineFlags,
     ) -> RenderPipeline {
         let lock = self.0.lock().unwrap();
         RenderPipeline::new(
@@ -353,9 +351,7 @@ impl Renderer {
             code,
             textures,
             sampler,
-            allow_world_uniform,
-            allow_camera_uniform,
-            allow_object_uniform,
+            flags,
         )
     }
 
@@ -496,7 +492,7 @@ mod tests {
         let sampler = renderer.create_sampler(AddressMode::Repeat, FilterMode::Linear);
 
         let render_pipeline =
-            renderer.create_render_pipeline(shader, &textures, Some(sampler), false, false, false);
+            renderer.create_render_pipeline(shader, &textures, Some(sampler), RenderPipelineFlags::empty());
 
         // Create test meshes
         let vertices = [[0.5, 0.5, 0.0], [-0.5, 0.5, 0.0], [-0.0, -0.5, 0.0]];
