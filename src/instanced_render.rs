@@ -1,60 +1,54 @@
-use crate::Renderer;
-use crate::camera::Camera;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
 use crate::render_pipeline::RenderPipeline;
 use crate::texture::{Spritesheet, TextureInner};
+use crate::{Renderer, RendererInner};
 use std::collections::HashSet;
 use std::sync::Mutex;
-use wgpu::{BindGroupLayout, Device, Queue};
 
 pub struct InstancedRender {
-    renderer: Renderer,
+    _renderer: Renderer,
     render_pipelines: Vec<RenderPipeline>,
     spritesheet: Spritesheet,
 
     // TODO: replace this member with something a little more useful
     count: usize,
 
-    mesh: WeakMesh,
-    mesh_collection: LinkedList<Mesh>,
-    atlas_collection: Mutex<LinkedList<*const TextureInner>>,
+    _mesh: WeakMesh,
+    _mesh_collection: LinkedList<Mesh>,
+    _atlas_collection: Mutex<LinkedList<*const TextureInner>>,
 }
 impl InstancedRender {
     pub fn new(
         renderer: Renderer,
-        device: &Device,
-        queue: &Queue,
-        cast_bind_group_layout: &BindGroupLayout,
-        cast_render_pipeline: &wgpu::RenderPipeline,
-        cast_sampler: &wgpu::Sampler,
+        r_inner: &RendererInner,
         mesh: &Mesh,
     ) -> Self {
         Self {
-            renderer: renderer.clone(),
+            _renderer: renderer.clone(),
             render_pipelines: Default::default(),
             spritesheet: Spritesheet::new(
                 renderer,
-                device,
-                queue,
-                cast_bind_group_layout,
-                cast_render_pipeline,
-                cast_sampler,
+                &r_inner.device,
+                &r_inner.queue,
+                &r_inner.cast_bind_group_layout,
+                &r_inner.cast_render_pipeline,
+                &r_inner.cast_sampler,
             ),
 
             count: 0,
 
-            mesh: mesh.downgrade(),
-            mesh_collection: LinkedList::new(),
-            atlas_collection: Default::default(),
+            _mesh: mesh.downgrade(),
+            _mesh_collection: LinkedList::new(),
+            _atlas_collection: Default::default(),
         }
     }
 
-    pub fn add_mesh(&mut self, device: &Device, camera: &Camera, mesh: &Mesh) {
+    pub fn add_mesh(&mut self, r_inner: &RendererInner, mesh: &Mesh) {
         let mesh_rp = mesh.render_pipeline();
 
         let mesh_textures = mesh_rp.textures();
-        let sprites = self.spritesheet.add_textures(&mesh_textures);
+        let sprites = self.spritesheet.add_textures_locked(r_inner, &mesh_textures);
 
         let atlases = sprites
             .iter()
@@ -77,7 +71,14 @@ impl InstancedRender {
             textures.extend(atlases.clone());
 
             let new_rp = RenderPipeline::new(
-                device, camera, &shader, &textures, sampler, false, false, false,
+                &r_inner.device,
+                &r_inner.camera,
+                &shader,
+                &textures,
+                sampler,
+                false,
+                false,
+                false,
             );
 
             // Update the render pipeline
@@ -93,7 +94,14 @@ impl InstancedRender {
         let textures = atlases.iter().cloned().collect::<Vec<_>>();
 
         let new_rp = RenderPipeline::new(
-            device, camera, &shader, &textures, sampler, false, false, false,
+            &r_inner.device,
+            &r_inner.camera,
+            &shader,
+            &textures,
+            sampler,
+            false,
+            false,
+            false,
         );
         self.render_pipelines.push(new_rp);
         self.count += 1;

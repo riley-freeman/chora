@@ -4,7 +4,7 @@ use crate::Renderer;
 
 pub(crate) struct SamplerInner {
     pub(crate) sampler: wgpu::Sampler,
-    renderer: Renderer,
+    _renderer: Renderer,
 }
 
 #[derive(Clone)]
@@ -29,7 +29,7 @@ impl Sampler {
 
         let inner = SamplerInner {
             sampler,
-            renderer,
+            _renderer: renderer,
         };
 
         Self {

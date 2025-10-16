@@ -1,5 +1,5 @@
 use cgmath::num_traits::FromPrimitive;
-use etagere::euclid::{Point2D, Rect};
+use etagere::euclid::Point2D;
 use etagere::{AtlasAllocator, Rectangle};
 use image::ColorType;
 use image::ImageReader;
@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::linked_list::LinkedList;
 use crate::render_target::RenderTarget;
-use crate::{MAX_TEXTURE_SIZE, Renderer};
+use crate::{MAX_TEXTURE_SIZE, Renderer, RendererInner};
 use wgpu::TextureDescriptor;
 use wgpu::TextureDimension;
 use wgpu::TextureFormat;
@@ -34,18 +34,15 @@ pub(crate) struct TextureInner {
     view: TextureView,
     _renderer: Renderer,
     bind_group: wgpu::BindGroup,
-
-    width: u32,
-    height: u32,
 }
 
 impl TextureInner {
     pub fn width(&self) -> u32 {
-        self.width
+        self.texture.width()
     }
 
     pub fn height(&self) -> u32 {
-        self.height
+        self.texture.height()
     }
 }
 
@@ -55,21 +52,24 @@ pub struct Texture {
     format: TextureFormat,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WeakTexture(Weak<Mutex<TextureInner>>);
 
 impl Texture {
-    pub fn new(
+    pub(crate) fn new_locked(
         renderer: Renderer,
-        device: &Device,
-        queue: &Queue,
-        cast_bind_group_layout: &BindGroupLayout,
-        cast_sampler: &wgpu::Sampler,
+        renderer_inner: &RendererInner,
         width: u32,
         height: u32,
         format: TextureFormat,
         data: Option<&[u8]>,
     ) -> Self {
+        let device = &renderer_inner.device;
+        let queue = &renderer_inner.queue;
+        let cast_bind_group_layout = &renderer_inner.cast_bind_group_layout;
+        let cast_sampler = &renderer_inner.cast_sampler;
+
         let desc = create_new_texture_desc(width, height, format);
 
         let texture = match data {
@@ -100,8 +100,6 @@ impl Texture {
             texture: texture,
             bind_group,
             view,
-            width,
-            height,
             _renderer: renderer,
         };
 
@@ -141,8 +139,6 @@ impl Texture {
             texture: texture,
             bind_group,
             view,
-            width,
-            height,
             _renderer: renderer,
         };
 
@@ -152,12 +148,9 @@ impl Texture {
         }
     }
 
-    pub fn load_from_file(
+    pub(crate) fn load_from_file_locked(
         renderer: Renderer,
-        device: &Device,
-        queue: &Queue,
-        cast_bind_group_layout: &BindGroupLayout,
-        cast_sampler: &wgpu::Sampler,
+        renderer_inner: &RendererInner,
         path: &Path,
     ) -> io::Result<Self> {
         let img = ImageReader::open(path)?.decode().unwrap();
@@ -165,12 +158,9 @@ impl Texture {
         let width = img.width();
         let height = img.height();
         let (format, data) = Self::align_image_data(img);
-        Ok(Texture::new(
+        Ok(Texture::new_locked(
             renderer,
-            device,
-            queue,
-            cast_bind_group_layout,
-            cast_sampler,
+            renderer_inner,
             width,
             height,
             format,
@@ -411,15 +401,15 @@ struct SpritesheetInner {
     renderer: Renderer,
     device: Device,
     queue: Queue,
-    cast_bind_group_layout: BindGroupLayout,
+    _cast_bind_group_layout: BindGroupLayout,
     cast_render_pipeline: wgpu::RenderPipeline,
-    cast_sampler: wgpu::Sampler,
+    _cast_sampler: wgpu::Sampler,
 }
 
 #[derive(Clone)]
 pub struct Sprite {
     pub(crate) spritesheet: Texture,
-    pub(crate) scissor: Rectangle,
+    pub(crate) _scissor: Rectangle,
 }
 
 impl Spritesheet {
@@ -438,23 +428,23 @@ impl Spritesheet {
             renderer,
             device: device.clone(),
             queue: queue.clone(),
-            cast_bind_group_layout: cast_bind_group_layout.clone(),
+            _cast_bind_group_layout: cast_bind_group_layout.clone(),
             cast_render_pipeline: cast_render_pipeline.clone(),
-            cast_sampler: cast_sampler.clone(),
+            _cast_sampler: cast_sampler.clone(),
         };
         Self {
             inner: Arc::new(Mutex::new(inner)),
         }
     }
 
-    pub fn add_textures(&self, texture: &[Texture]) -> Vec<Sprite> {
+    pub(crate) fn add_textures_locked(&self, r_inner: &RendererInner, texture: &[Texture]) -> Vec<Sprite> {
         let sprites = texture
             .iter()
             .map(|t| self.map_texture(t))
             .collect::<Vec<_>>();
 
         // Actually organize and render the textures to the atlas.
-        self.convert_to_max_rects();
+        self.convert_to_max_rects(r_inner);
         sprites
     }
 
@@ -472,7 +462,7 @@ impl Spritesheet {
 
         let sprite = Sprite {
             spritesheet: texture.clone(),
-            scissor: rect,
+            _scissor: rect,
         };
 
         lock.texture_mappings
@@ -480,9 +470,9 @@ impl Spritesheet {
         sprite
     }
 
-    fn convert_to_max_rects(&self) {
-        // TODO: MAKE THIS ASYNC
+    fn convert_to_max_rects(&self, r_inner: &RendererInner) {
         let mut lock = self.inner.lock().unwrap();
+        let renderer = lock.renderer.clone();
 
         let mut boxes = Vec::with_capacity(lock.texture_mappings.len());
         let mut textures = HashMap::new();
@@ -531,12 +521,9 @@ impl Spritesheet {
         // Create the Textures
         let mut atlases = Vec::with_capacity(bins.len());
         for _ in 0..bins.len() {
-            let sheet = Texture::new(
-                lock.renderer.clone(),
-                &lock.device,
-                &lock.queue,
-                &lock.cast_bind_group_layout,
-                &lock.cast_sampler,
+            let sheet = Texture::new_locked(
+                renderer.clone(),
+                r_inner,
                 MAX_TEXTURE_SIZE,
                 MAX_TEXTURE_SIZE,
                 TextureFormat::Rgba8Unorm,
@@ -548,7 +535,7 @@ impl Spritesheet {
 
         lock.texture_mappings.clear();
 
-        for (i, alloc) in placed.iter().enumerate() {
+        for alloc in placed.iter() {
             let bucket_id = alloc.bucketid.unwrap() as usize;
             let atlas = &atlases[bucket_id - 1];
 
@@ -570,7 +557,7 @@ impl Spritesheet {
                 texture as *const _,
                 Sprite {
                     spritesheet: atlas.clone(),
-                    scissor: rect,
+                    _scissor: rect,
                 },
             );
 
@@ -641,7 +628,7 @@ fn cast_texture_to_atlas(
 #[cfg(test)]
 mod tests {
     use crate::texture::Texture;
-    use crate::{MAX_TEXTURE_SIZE, Renderer};
+    use crate::{Renderer, RendererInner};
     use image::{ColorType, ExtendedColorType};
     use rand::Rng;
     use std::collections::HashMap;
@@ -651,17 +638,13 @@ mod tests {
     use std::sync::{LazyLock, Mutex};
     use std::{fs, io};
     use wgpu::wgt::PollType;
-    use wgpu::{Device, MapMode, Queue, TextureFormat};
+    use wgpu::{MapMode, TextureFormat};
 
     #[test]
     fn group_random_textures() {
         let mut renderer = Renderer::new(512, 512, 1).unwrap();
 
-        let spritesheet = renderer.create_spritesheet(
-            MAX_TEXTURE_SIZE,
-            MAX_TEXTURE_SIZE,
-            TextureFormat::Rgba8Unorm,
-        );
+        let spritesheet = renderer.create_spritesheet();
 
         for _ in 0..2 {
             let mut images = Vec::with_capacity(16);
@@ -671,16 +654,15 @@ mod tests {
                     images.push(image);
                 }
             }
-            spritesheet.add_textures(&images);
+            let lock = renderer.0.lock().unwrap();
+            spritesheet.add_textures_locked(&lock, &images);
         }
 
         let lock = renderer.0.lock().unwrap();
-
         let device = lock.device.clone();
-        let queue = lock.queue.clone();
         device.poll(PollType::Wait).unwrap();
 
-        //output_atlases(&device, &queue, spritesheet.inner.lock().unwrap().textures.as_slice());
+        output_atlases(&lock, spritesheet.inner.lock().unwrap().textures.as_slice());
     }
 
     static RANDOM_TEXTURES: LazyLock<Mutex<HashMap<String, Texture>>> =
@@ -711,7 +693,10 @@ mod tests {
         None
     }
 
-    fn output_atlases(device: &Device, queue: &Queue, textures: &[Texture]) {
+    fn output_atlases(renderer_inner: &RendererInner, textures: &[Texture]) {
+        let device = &renderer_inner.device;
+        let queue = &renderer_inner.queue;
+
         // Create a folder if needed
         fs::create_dir_all("./atlas/").unwrap();
         let mut receivers = Vec::new();
@@ -721,7 +706,7 @@ mod tests {
             let buffer = texture.write_to_new_buffer(&device, &queue);
             let buffer_cloned = buffer.clone();
 
-            let color_type = format_to_color_type(texture.format());
+            let color_type = _format_to_color_type(texture.format());
 
             let width = texture.width() as u64;
             let height = texture.height() as u64;
@@ -756,7 +741,7 @@ mod tests {
         }
     }
 
-    fn format_to_color_type(format: TextureFormat) -> ColorType {
+    fn _format_to_color_type(format: TextureFormat) -> ColorType {
         match format {
             TextureFormat::R8Unorm => ColorType::L8,
             TextureFormat::Rg8Unorm => ColorType::Rgb8,

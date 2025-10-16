@@ -28,6 +28,7 @@ pub struct Mesh {
     pub(crate) added: AtomicBool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct WeakMesh(Weak<Mutex<MeshInner>>);
 

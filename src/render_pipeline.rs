@@ -17,9 +17,9 @@ pub(crate) struct RenderPipelineInner {
     pub(crate) sampler: Option<Sampler>,
     pub(crate) shader_code: String,
 
-    uniform_bind_group_layout: wgpu::BindGroupLayout,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
-    texture_bind_group: wgpu::BindGroup,
+    _uniform_bind_group_layout: wgpu::BindGroupLayout,
+    _texture_bind_group_layout: wgpu::BindGroupLayout,
+    _texture_bind_group: wgpu::BindGroup,
 
     _pipeline_layout: wgpu::PipelineLayout,
     _render_pipeline: wgpu::RenderPipeline,
@@ -96,9 +96,9 @@ impl RenderPipeline {
             textures: Vec::from(textures),
             sampler,
             shader_code: shader.into(),
-            uniform_bind_group_layout,
-            texture_bind_group_layout,
-            texture_bind_group,
+            _uniform_bind_group_layout: uniform_bind_group_layout,
+            _texture_bind_group_layout: texture_bind_group_layout,
+            _texture_bind_group: texture_bind_group,
             _pipeline_layout: pipeline_layout,
             _render_pipeline: render_pipeline,
         };
@@ -214,11 +214,11 @@ impl RenderPipeline {
         WeakRenderPipeline(Arc::downgrade(&self.inner))
     }
 
-    pub fn lock(&self) -> MutexGuard<RenderPipelineInner> {
+    pub (crate) fn lock(&'_ self) -> MutexGuard<'_, RenderPipelineInner> {
         self.inner.lock().unwrap()
     }
 
-    pub fn textures<'a>(&self) -> Vec<Texture> {
+    pub fn textures(&self) -> Vec<Texture> {
         let lock = self.inner.lock().unwrap();
         lock.textures.clone()
     }

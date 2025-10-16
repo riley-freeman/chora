@@ -11,9 +11,10 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io;
+use std::ops::DerefMut;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, LazyLock, Mutex};
 use wgpu::BackendOptions;
 use wgpu::Backends;
 use wgpu::Device;
@@ -27,10 +28,10 @@ use wgpu::wgt::TextureFormat;
 use wgpu::wgt::{DeviceDescriptor, SamplerDescriptor};
 use wgpu::{
     Adapter, AddressMode, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingType, ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp,
-    MultisampleState, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor,
+    BindingType, ColorTargetState, ColorWrites, FilterMode, FragmentState,
+    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
     PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, TextureSampleType, TextureViewDimension, VertexState,
+    ShaderSource, ShaderStages, TextureSampleType, TextureViewDimension, VertexState,
 };
 
 pub mod camera;
@@ -45,7 +46,7 @@ pub mod sampler;
 pub mod texture;
 
 const MAX_TEXTURE_SIZE: u32 = 2048;
-const MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
+const _MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
 
 static INSTANCE: LazyLock<Instance> = LazyLock::new(|| {
     Instance::new(&InstanceDescriptor {
@@ -77,9 +78,9 @@ struct RendererInner {
     // Final / Main output
     camera: Camera,
     _position: Box<Vector3<f32>>,
-    pitch: Box<f32>,
-    yaw: Box<f32>,
-    roll: Box<f32>,
+    _pitch: Box<f32>,
+    _yaw: Box<f32>,
+    _roll: Box<f32>,
 
     // Mesh Database (I think I don't really know what this is called)
     mesh_collection: HashMap<*const c_void, LinkedList<WeakMesh>>,
@@ -146,9 +147,9 @@ impl Renderer {
 
             camera,
             _position: position,
-            pitch,
-            yaw,
-            roll,
+            _pitch: pitch,
+            _yaw: yaw,
+            _roll: roll,
 
             cast_bind_group_layout,
             cast_render_pipeline,
@@ -306,19 +307,9 @@ impl Renderer {
         format: TextureFormat,
         data: Option<&[u8]>,
     ) -> Texture {
-        let lock = self.0.lock().unwrap();
-        let device = lock.device.clone();
-        let queue = lock.queue.clone();
-        let cast_layout = lock.cast_bind_group_layout.clone();
-        let cast_sampler = lock.cast_sampler.clone();
-        drop(lock);
-
-        Texture::new(
+        Texture::new_locked(
             self.clone(),
-            &device,
-            &queue,
-            &cast_layout,
-            &cast_sampler,
+            &self.0.lock().unwrap(),
             width,
             height,
             format,
@@ -328,9 +319,6 @@ impl Renderer {
 
     pub fn create_spritesheet(
         &self,
-        width: u32,
-        height: u32,
-        format: TextureFormat,
     ) -> Spritesheet {
         let lock = self.0.lock().unwrap();
         let device = lock.device.clone();
@@ -340,25 +328,18 @@ impl Renderer {
         let cast_sampler = lock.cast_sampler.clone();
         drop(lock);
 
-        Spritesheet::new(self.clone(), &device, &queue, &cast_layout, &cast_render_pipeline, &cast_sampler)
-    }
-
-    pub fn load_texture_from_path(&self, path: &Path) -> io::Result<Texture> {
-        let lock = self.0.lock().unwrap();
-        let device = lock.device.clone();
-        let queue = lock.queue.clone();
-        let cast_layout = lock.cast_bind_group_layout.clone();
-        let cast_sampler = lock.cast_sampler.clone();
-        drop(lock);
-
-        Texture::load_from_file(
+        Spritesheet::new(
             self.clone(),
             &device,
             &queue,
             &cast_layout,
+            &cast_render_pipeline,
             &cast_sampler,
-            path,
         )
+    }
+
+    pub fn load_texture_from_path(&self, path: &Path) -> io::Result<Texture> {
+        Texture::load_from_file_locked(self.clone(), &self.0.lock().unwrap(), path)
     }
 
     pub fn create_sampler(&self, address_mode: AddressMode, filter_mode: FilterMode) -> Sampler {
@@ -388,7 +369,7 @@ impl Renderer {
         )
     }
 
-    pub fn add_to_render_queue(&mut self, mut model: Model) -> Result<(), error::ChoraError> {
+    pub fn add_to_render_queue(&mut self, model: Model) -> Result<(), error::ChoraError> {
         for mesh in model.into_iter() {
             self.add_mesh_to_render_queue(&mesh)?;
             mesh.added.store(true, Ordering::Relaxed);
@@ -403,13 +384,10 @@ impl Renderer {
         let render_pipeline = mesh.render_pipeline();
 
         let clone = self.clone();
-        let device = self.device();
-        let camera = self.main_camera();
-        let queue = self.queue();
-        let cast_bind_group_layout = self.cast_bind_group_layout();
-        let cast_render_pipeline = self.cast_render_pipeline();
-        let cast_sampler = self.cast_sampler();
         let mut this = self.0.lock().unwrap();
+        let this_mut = unsafe {
+            std::mem::transmute_copy::<&mut RendererInner, &mut RendererInner>(&this.deref_mut())
+        };
 
         // Organize the mesh into groups
         let mesh_collection = this
@@ -424,23 +402,15 @@ impl Renderer {
 
         let mesh_collection_len = mesh_collection.len();
         if mesh_collection_len > 1 {
-            let instanced_render =
-                this.mesh_instanced_renders
-                    .entry(mesh_address)
-                    .or_insert(InstancedRender::new(
-                        clone,
-                        &device,
-                        &queue,
-                        &cast_bind_group_layout,
-                        &cast_render_pipeline,
-                        &cast_sampler,
-                        mesh,
-                    ));
-            instanced_render.add_mesh(&device, &camera, &mesh);
+            let instanced_render = this_mut
+                .mesh_instanced_renders
+                .entry(mesh_address)
+                .or_insert(InstancedRender::new(clone, &this, mesh));
+            instanced_render.add_mesh(&this, &mesh);
 
+            // Double up mesh
             if mesh_collection_len == 2 {
-                instanced_render.add_mesh(&device, &camera, &mesh);
-
+                instanced_render.add_mesh(&this, &mesh);
                 this.independent_renders.remove(&mesh_address).unwrap();
             }
         } else {
@@ -497,14 +467,11 @@ impl Renderer {
     pub fn cast_render_pipeline(&self) -> wgpu::RenderPipeline {
         self.0.lock().unwrap().cast_render_pipeline.clone()
     }
-
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::RgbaImage;
     use std::mem::drop;
     use std::sync::atomic::AtomicBool;
 
