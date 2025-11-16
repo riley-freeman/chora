@@ -35,6 +35,7 @@ use wgpu::{
 };
 
 pub mod camera;
+pub mod coordination;
 pub mod error;
 mod instanced_render;
 mod linked_list;
@@ -43,8 +44,10 @@ pub mod model;
 pub mod render_pipeline;
 pub mod render_target;
 pub mod sampler;
+mod shader_parser;
+mod shader_rewriter;
+mod shader_merger;
 pub mod texture;
-pub mod coordination;
 mod utils;
 
 const MAX_TEXTURE_SIZE: u32 = 2048;
