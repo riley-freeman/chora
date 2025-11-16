@@ -1,3 +1,4 @@
+use crate::coordination::TextureRemapping;
 use crate::render_target::RenderTarget;
 use crate::sampler::Sampler;
 use crate::texture::Texture;
@@ -24,6 +25,7 @@ bitflags! {
 pub(crate) struct RenderPipelineInner {
     pub(crate) textures: Vec<Texture>,
     pub(crate) sampler: Option<Sampler>,
+    pub(crate) original_shader_source: String,
     pub(crate) shader_code: String,
 
     _uniform_bind_group_layout: wgpu::BindGroupLayout,
@@ -46,11 +48,49 @@ impl RenderPipeline {
     pub fn new(
         device: &wgpu::Device,
         render_target: &dyn RenderTarget,
-        shader: &str,
+        source: &str,
         textures: &[Texture],
         sampler: Option<Sampler>,
+        remappings: Vec<TextureRemapping>,
         flags: RenderPipelineFlags,
     ) -> Self {
+
+        // Apply binding remapping to shader source
+        let mut shader = source.to_string();
+
+        // Generate textureSample functions for each remapped texture
+        let mut generated_functions = String::new();
+        for remapping in &remappings {
+            let function_name = format!("textureSample{}", remapping.binding);
+            let min_x = remapping.coords.min().x;
+            let min_y = remapping.coords.min().y;
+            let max_x = remapping.coords.max().x;
+            let max_y = remapping.coords.max().y;
+
+            let function = format!(
+                "fn {}(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>) -> vec4<f32> {{\n\
+                 \tlet min_uv = vec2<f32>({}, {});\n\
+                 \tlet max_uv = vec2<f32>({}, {});\n\
+                 \tlet remapped_uv = min_uv + uv * (max_uv - min_uv);\n\
+                 \treturn textureSample(tex, samp, remapped_uv);\n\
+                 }}\n\n",
+                function_name, min_x, min_y, max_x, max_y
+            );
+            generated_functions.push_str(&function);
+
+            // Replace the binding number in the shader source
+            // Match patterns like "@binding(44)" and replace with "@binding(0)"
+            let old_binding = format!("@binding({})", remapping.binding);
+            let new_binding = format!("@binding({})", remapping.new_binding);
+            shader = shader.replace(&old_binding, &new_binding);
+        }
+
+        // Prepend generated functions to the shader source
+        let shader = format!("{}{}", generated_functions, shader);
+
+        
+
+
         // Get the flag info (about the uniform buffers)
         let allow_world_uniform = flags.contains(RenderPipelineFlags::ALLOW_WORLD_UNIFORM);
         let allow_camera_uniform = flags.contains(RenderPipelineFlags::ALLOW_CAMERA_UNIFORM);
@@ -82,7 +122,7 @@ impl RenderPipeline {
 
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
-            source: wgpu::ShaderSource::Wgsl(shader.into()),
+            source: wgpu::ShaderSource::Wgsl(shader.clone().into()),
         });
 
         let desc = PipelineLayoutDescriptor {
@@ -122,7 +162,8 @@ impl RenderPipeline {
         let inner = RenderPipelineInner {
             textures: Vec::from(textures),
             sampler,
-            shader_code: shader.into(),
+            original_shader_source: source.to_string(),
+            shader_code: shader,
             _uniform_bind_group_layout: uniform_bind_group_layout,
             _texture_bind_group_layout: texture_bind_group_layout,
             _texture_bind_group: texture_bind_group,
@@ -273,6 +314,11 @@ impl RenderPipeline {
     pub fn shader_code(&self) -> String {
         let lock = self.inner.lock().unwrap();
         lock.shader_code.clone()
+    }
+
+    pub fn original_shader_source(&self) -> String {
+        let lock = self.inner.lock().unwrap();
+        lock.original_shader_source.clone()
     }
 }
 

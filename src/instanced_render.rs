@@ -1,9 +1,10 @@
+use crate::coordination::TextureRemapping;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
 use crate::render_pipeline::{RenderPipeline, RenderPipelineFlags};
-use crate::texture::{Spritesheet, TextureInner};
+use crate::texture::{Spritesheet, Texture, TextureInner};
 use crate::{Renderer, RendererInner};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 pub struct InstancedRender {
@@ -46,10 +47,18 @@ impl InstancedRender {
         let mesh_textures = mesh_rp.textures();
         let sprites = self.spritesheet.add_textures_locked(r_inner, &mesh_textures);
 
-        let atlases = sprites
-            .iter()
-            .map(|sprite| sprite.spritesheet.clone())
-            .collect::<HashSet<_>>();
+        // Build atlas texture list and create texture->atlas mapping
+        let mut atlas_map: HashMap<Texture, usize> = HashMap::new();
+        let mut atlases = Vec::new();
+
+        for sprite in &sprites {
+            let atlas = sprite.atlas_texture().clone();
+            if !atlas_map.contains_key(&atlas) {
+                let idx = atlases.len();
+                atlases.push(atlas.clone());
+                atlas_map.insert(atlas, idx);
+            }
+        }
 
         // Try to add to an existing render pipeline
         for p in &mut self.render_pipelines {
@@ -59,12 +68,27 @@ impl InstancedRender {
                 continue;
             }
 
-            // Create a new render pipeline
-            let shader = lock.shader_code.clone();
+            // Create a new render pipeline with remapping
+            let shader = lock.original_shader_source.clone();
             let sampler = lock.sampler.clone();
 
+            let existing_texture_count = lock.textures.len();
             let mut textures = lock.textures.clone();
             textures.extend(atlases.clone());
+
+            // Create texture remappings for each original texture
+            let mut remappings = Vec::new();
+            for (original_binding, sprite) in sprites.iter().enumerate() {
+                let atlas = sprite.atlas_texture();
+                let atlas_idx = atlas_map.get(atlas).unwrap();
+                let new_binding = existing_texture_count + atlas_idx;
+
+                remappings.push(TextureRemapping::from_sprite(
+                    original_binding as u32,
+                    new_binding as u32,
+                    sprite,
+                ));
+            }
 
             let new_rp = RenderPipeline::new(
                 &r_inner.device,
@@ -72,6 +96,7 @@ impl InstancedRender {
                 &shader,
                 &textures,
                 sampler,
+                remappings,
                 RenderPipelineFlags::default(),
             );
 
@@ -82,17 +107,30 @@ impl InstancedRender {
             return;
         }
 
-        // Create a new render pipeline
-        let shader = mesh_rp.shader_code().clone();
-        let sampler = mesh_rp.sampler().clone();
-        let textures = atlases.iter().cloned().collect::<Vec<_>>();
+        // Create a new render pipeline with remapping
+        let shader = mesh_rp.original_shader_source();
+        let sampler = mesh_rp.sampler();
+
+        // Create texture remappings for each original texture
+        let mut remappings = Vec::new();
+        for (original_binding, sprite) in sprites.iter().enumerate() {
+            let atlas = sprite.atlas_texture();
+            let atlas_idx = atlas_map.get(atlas).unwrap();
+
+            remappings.push(TextureRemapping::from_sprite(
+                original_binding as u32,
+                *atlas_idx as u32,
+                sprite,
+            ));
+        }
 
         let new_rp = RenderPipeline::new(
             &r_inner.device,
             &r_inner.camera,
             &shader,
-            &textures,
+            &atlases,
             sampler,
+            remappings,
             RenderPipelineFlags::default(),
         );
         self.render_pipelines.push(new_rp);

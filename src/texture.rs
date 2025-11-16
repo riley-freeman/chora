@@ -1,6 +1,4 @@
 use cgmath::num_traits::FromPrimitive;
-use etagere::euclid::Point2D;
-use etagere::{AtlasAllocator, Rectangle};
 use image::ColorType;
 use image::ImageReader;
 use image::{DynamicImage, GenericImageView};
@@ -15,6 +13,8 @@ use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::coordination::Rectangle;
+use crate::coordination::Point2D;
 use crate::linked_list::LinkedList;
 use crate::render_target::RenderTarget;
 use crate::{MAX_TEXTURE_SIZE, Renderer, RendererInner};
@@ -387,14 +387,8 @@ fn create_new_texture_desc<'a>(
     }
 }
 
-#[derive(Clone)]
-pub struct Spritesheet {
-    inner: Arc<Mutex<SpritesheetInner>>,
-}
-
 struct SpritesheetInner {
     pub(crate) textures: Vec<Texture>,
-    pub(crate) shelf_allocators: Vec<AtlasAllocator>,
 
     pub(crate) texture_mappings: HashMap<*const TextureInner, Sprite>,
 
@@ -407,16 +401,41 @@ struct SpritesheetInner {
 }
 
 #[derive(Clone)]
+pub struct Spritesheet {
+    inner: Arc<Mutex<SpritesheetInner>>,
+}
+
+#[derive(Clone)]
 pub struct Sprite {
     pub(crate) spritesheet: Texture,
-    pub(crate) _scissor: Rectangle,
+    pub(crate) _scissor: Rectangle<i32>,
+}
+
+impl Sprite {
+    /// Returns the normalized UV coordinates (0.0 - 1.0) for this sprite within the atlas
+    pub fn uv_coords(&self) -> Rectangle<f32> {
+        let atlas_width = self.spritesheet.width() as f32;
+        let atlas_height = self.spritesheet.height() as f32;
+
+        let min_x = self._scissor.min().x as f32 / atlas_width;
+        let min_y = self._scissor.min().y as f32 / atlas_height;
+        let max_x = self._scissor.max().x as f32 / atlas_width;
+        let max_y = self._scissor.max().y as f32 / atlas_height;
+
+        Rectangle::new(
+            Point2D::new(min_x, min_y),
+            Point2D::new(max_x, max_y),
+        )
+    }
+
+    /// Returns the atlas texture that contains this sprite
+    pub fn atlas_texture(&self) -> &Texture {
+        &self.spritesheet
+    }
 }
 
 impl Spritesheet {
-    pub(crate) fn new_lock(
-        renderer: Renderer,
-        renderer_inner: &RendererInner,
-    ) -> Self {
+    pub(crate) fn new_lock(renderer: Renderer, renderer_inner: &RendererInner) -> Self {
         let device = &renderer_inner.device;
         let queue = &renderer_inner.queue;
         let cast_bind_group_layout = &renderer_inner.cast_bind_group_layout;
@@ -424,7 +443,6 @@ impl Spritesheet {
         let cast_sampler = &renderer_inner.cast_sampler;
         let inner = SpritesheetInner {
             textures: Vec::new(),
-            shelf_allocators: Vec::new(),
             texture_mappings: HashMap::new(),
             renderer,
             device: device.clone(),
@@ -438,7 +456,11 @@ impl Spritesheet {
         }
     }
 
-    pub(crate) fn add_textures_locked(&self, r_inner: &RendererInner, texture: &[Texture]) -> Vec<Sprite> {
+    pub(crate) fn add_textures_locked(
+        &self,
+        r_inner: &RendererInner,
+        texture: &[Texture],
+    ) -> Vec<Sprite> {
         let sprites = texture
             .iter()
             .map(|t| self.map_texture(t))
@@ -457,13 +479,9 @@ impl Spritesheet {
             return sprite.clone();
         }
 
-        let width = texture.width();
-        let height = texture.height();
-        let rect = Rectangle::new(Point2D::new(0, 0), Point2D::new(width as _, height as _));
-
         let sprite = Sprite {
             spritesheet: texture.clone(),
-            _scissor: rect,
+            _scissor: Rectangle::default(),
         };
 
         lock.texture_mappings
@@ -494,9 +512,7 @@ impl Spritesheet {
             &[Bucket::new(
                 MAX_TEXTURE_SIZE as _,
                 MAX_TEXTURE_SIZE as _,
-                0,
-                0,
-                1,
+                0, 0, 1,
             )],
         );
 
@@ -540,13 +556,11 @@ impl Spritesheet {
             let bucket_id = alloc.bucketid.unwrap() as usize;
             let atlas = &atlases[bucket_id - 1];
 
-            let rect = Rectangle::new(
-                Point2D::new(alloc.originx.unwrap(), alloc.originy.unwrap()),
-                Point2D::new(
-                    alloc.originx.unwrap() + alloc.width,
-                    alloc.originy.unwrap() + alloc.height,
-                ),
-            );
+            let x = alloc.originx.unwrap() as _;
+            let y = alloc.originy.unwrap() as _;
+            let w = alloc.originx.unwrap() + alloc.width;
+            let h = alloc.originy.unwrap() + alloc.height;
+            let rect: Rectangle<i32> = Rectangle::new(Point2D::new(x, y), Point2D::new(w, h));
 
             let texture = textures
                 .get_mut(&(alloc.width as _, alloc.height as _))
@@ -572,7 +586,6 @@ impl Spritesheet {
             );
         }
 
-        lock.shelf_allocators = Vec::new();
         lock.textures = atlases;
     }
 
@@ -593,7 +606,7 @@ fn cast_texture_to_atlas(
     cast_render_pipeline: &wgpu::RenderPipeline,
     src: &TextureInner,
     dest: &Texture,
-    scissor: &Rectangle,
+    rect: &Rectangle<i32>,
 ) {
     let mut encoder = device.create_command_encoder(&Default::default());
     {
@@ -614,10 +627,10 @@ fn cast_texture_to_atlas(
         });
         r_pass.set_pipeline(&cast_render_pipeline);
         r_pass.set_bind_group(0, Some(&src.bind_group), &[]);
-        let x = scissor.min.x as u32;
-        let y = scissor.min.y as u32;
-        let w = scissor.max.x as u32 - x;
-        let h = scissor.max.y as u32 - y;
+        let x = rect.min().x    as u32;
+        let y = rect.min().y    as u32;
+        let w = rect.width()    as u32;
+        let h = rect.height()   as u32;
         r_pass.set_scissor_rect(x, y, w, h);
         r_pass.set_viewport(x as _, y as _, w as _, h as _, 0.0, 1.0);
         r_pass.draw(0..3, 0..1);
