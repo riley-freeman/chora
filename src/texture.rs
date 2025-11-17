@@ -316,6 +316,80 @@ impl Texture {
 
         queue.submit(Some(encoder.finish()))
     }
+
+    /// Export this texture to a PNG file
+    ///
+    /// # Arguments
+    /// * `device` - The GPU device (from renderer.device())
+    /// * `queue` - The GPU queue (from renderer.queue())
+    /// * `path` - The file path to save to
+    ///
+    /// # Example
+    /// ```no_run
+    /// use std::path::Path;
+    /// # let renderer = todo!();
+    /// # let texture = todo!();
+    /// let device = renderer.device();
+    /// let queue = renderer.queue();
+    /// texture.export_to_file(&device, &queue, Path::new("output.png")).unwrap();
+    /// ```
+    pub fn export_to_file(&self, device: &Device, queue: &Queue, path: &Path) -> io::Result<()> {
+        use image::ExtendedColorType;
+        use std::sync::mpsc::channel;
+        use wgpu::{MapMode, PollType};
+
+        let buffer = self.write_to_new_buffer(device, queue);
+        let buffer_cloned = buffer.clone();
+
+        let color_type = Self::format_to_color_type(self.format);
+        let width = self.width();
+        let height = self.height();
+        let bytes_per_pixel = color_type.bytes_per_pixel() as u64;
+        let size = width as u64 * height as u64 * bytes_per_pixel;
+
+        let (sender, receiver) = channel();
+        let path_buf = path.to_path_buf();
+
+        buffer.map_async(MapMode::Read, 0..size, move |result| {
+            if result.is_ok() {
+                let data = buffer_cloned.get_mapped_range(0..size);
+                let save_result = image::save_buffer(
+                    &path_buf,
+                    data.iter().as_ref(),
+                    width,
+                    height,
+                    ExtendedColorType::from(color_type),
+                );
+                sender.send(save_result).unwrap();
+            } else {
+                sender.send(Err(image::ImageError::IoError(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Failed to map GPU buffer"
+                )))).unwrap();
+            }
+        });
+
+        device.poll(PollType::Wait).unwrap();
+        receiver.recv().unwrap()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        buffer.unmap();
+
+        Ok(())
+    }
+
+    fn format_to_color_type(format: TextureFormat) -> ColorType {
+        match format {
+            TextureFormat::R8Unorm => ColorType::L8,
+            TextureFormat::Rg8Unorm => ColorType::Rgb8,
+            TextureFormat::R16Unorm => ColorType::L16,
+            TextureFormat::Rgba8Unorm => ColorType::Rgba8,
+            TextureFormat::Rg16Unorm => ColorType::Rgb16,
+            TextureFormat::Rgba16Unorm => ColorType::Rgba16,
+            TextureFormat::Rgba32Float => ColorType::Rgba32F,
+
+            _ => unimplemented!(),
+        }
+    }
 }
 
 impl RenderTarget for Texture {
@@ -755,17 +829,7 @@ mod tests {
         }
     }
 
-    fn _format_to_color_type(format: TextureFormat) -> ColorType {
-        match format {
-            TextureFormat::R8Unorm => ColorType::L8,
-            TextureFormat::Rg8Unorm => ColorType::Rgb8,
-            TextureFormat::R16Unorm => ColorType::L16,
-            TextureFormat::Rgba8Unorm => ColorType::Rgba8,
-            TextureFormat::Rg16Unorm => ColorType::Rgb16,
-            TextureFormat::Rgba16Unorm => ColorType::Rgba16,
-            TextureFormat::Rgba32Float => ColorType::Rgba32F,
-
-            _ => unimplemented!(),
-        }
-    }
+fn _format_to_color_type(format: TextureFormat) -> ColorType {
+    Texture::format_to_color_type(format)
+}
 }

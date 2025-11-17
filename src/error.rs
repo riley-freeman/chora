@@ -4,6 +4,9 @@ use std::fmt::{Debug, Display};
 pub enum ChoraError {
     FailedToFindAdapter{},
     FailedGettingSuitableDevice{},
+    FailedToCreateSurface,
+    NoSurfaceConfigured,
+    FailedToAcquireSwapchainTexture,
 }
 
 impl std::error::Error for ChoraError {}

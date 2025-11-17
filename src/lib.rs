@@ -29,9 +29,10 @@ use wgpu::wgt::{DeviceDescriptor, SamplerDescriptor};
 use wgpu::{
     Adapter, AddressMode, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
     BindingType, ColorTargetState, ColorWrites, FilterMode, FragmentState,
-    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
+    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode,
     PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, TextureSampleType, TextureViewDimension, VertexState,
+    ShaderSource, ShaderStages, Surface, SurfaceConfiguration, TextureSampleType,
+    TextureViewDimension, VertexState,
 };
 
 pub mod camera;
@@ -79,6 +80,10 @@ struct RendererInner {
     cast_render_pipeline: wgpu::RenderPipeline,
     cast_bind_group_layout: BindGroupLayout,
     cast_sampler: wgpu::Sampler,
+
+    // Swapchain support (optional)
+    surface: Option<Surface<'static>>,
+    surface_config: Option<SurfaceConfiguration>,
 
     // Final / Main output
     camera: Camera,
@@ -159,6 +164,9 @@ impl Renderer {
             cast_bind_group_layout,
             cast_render_pipeline,
             cast_sampler,
+
+            surface: None,
+            surface_config: None,
 
             mesh_collection: Default::default(),
 
@@ -478,6 +486,185 @@ impl Renderer {
     }
     pub fn cast_render_pipeline(&self) -> wgpu::RenderPipeline {
         self.0.lock().unwrap().cast_render_pipeline.clone()
+    }
+
+    /// Create a surface from a window handle for presenting rendered frames.
+    ///
+    /// This enables the renderer to display output to a window instead of just
+    /// rendering to off-screen textures (headless mode).
+    ///
+    /// # Arguments
+    /// * `window` - A type implementing HasWindowHandle and HasDisplayHandle (e.g., winit::Window)
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use raw_window_handle::{HasWindowHandle, HasDisplayHandle};
+    /// # let renderer = todo!();
+    /// # let window: &dyn HasWindowHandle = todo!();
+    /// # let display: &dyn HasDisplayHandle = todo!();
+    /// renderer.create_surface(window, display).unwrap();
+    /// ```
+    pub fn create_surface(
+        &self,
+        window: &(impl raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle),
+    ) -> Result<(), error::ChoraError> {
+        let surface = unsafe {
+            INSTANCE.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)
+                .map_err(|_| error::ChoraError::FailedToCreateSurface)?)
+        }
+        .map_err(|_| error::ChoraError::FailedToCreateSurface)?;
+
+        let mut this = self.0.lock().unwrap();
+        let adapter = &this._adapter;
+
+        // Get surface capabilities
+        let surface_caps = surface.get_capabilities(adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let camera = &this.camera;
+        let config = SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: camera.width(),
+            height: camera.height(),
+            present_mode: PresentMode::Fifo,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+
+        surface.configure(&this.device, &config);
+
+        this.surface = Some(surface);
+        this.surface_config = Some(config);
+
+        Ok(())
+    }
+
+    /// Present the current frame to the window surface.
+    ///
+    /// This copies the main camera's output texture to the window's swapchain.
+    /// Requires that create_surface() has been called first.
+    ///
+    /// # Returns
+    /// Ok(()) if the frame was presented successfully
+    /// Err if no surface has been configured or presentation fails
+    ///
+    /// # Example
+    /// ```no_run
+    /// # let renderer = todo!();
+    /// // After rendering...
+    /// renderer.present().unwrap();
+    /// ```
+    pub fn present(&self) -> Result<(), error::ChoraError> {
+        let this = self.0.lock().unwrap();
+
+        let surface = this
+            .surface
+            .as_ref()
+            .ok_or(error::ChoraError::NoSurfaceConfigured)?;
+
+        let output = surface
+            .get_current_texture()
+            .map_err(|_| error::ChoraError::FailedToAcquireSwapchainTexture)?;
+
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Get camera's output texture and create a bind group for it
+        let camera = &this.camera;
+        let camera_texture_view = camera.current_output_texture_view();
+
+        // Create a temporary bind group for the camera texture
+        let bind_group = this.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Present Bind Group"),
+            layout: &this.cast_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&camera_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&this.cast_sampler),
+                },
+            ],
+        });
+
+        let mut encoder = this
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Present Encoder"),
+            });
+
+        // Use the cast render pipeline to blit the camera texture to the surface
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Present Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            render_pass.set_pipeline(&this.cast_render_pipeline);
+            render_pass.set_bind_group(0, &bind_group, &[]);
+            render_pass.draw(0..6, 0..1);
+        }
+
+        this.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+
+    /// Resize the swapchain surface.
+    ///
+    /// Call this when the window is resized to update the surface configuration.
+    ///
+    /// # Arguments
+    /// * `new_width` - The new width in pixels
+    /// * `new_height` - The new height in pixels
+    ///
+    /// # Example
+    /// ```no_run
+    /// # let renderer = todo!();
+    /// renderer.resize_surface(1920, 1080).unwrap();
+    /// ```
+    pub fn resize_surface(&self, new_width: u32, new_height: u32) -> Result<(), error::ChoraError> {
+        let mut this = self.0.lock().unwrap();
+
+        if this.surface.is_none() || this.surface_config.is_none() {
+            return Err(error::ChoraError::NoSurfaceConfigured);
+        }
+
+        // Update the config
+        let config = this.surface_config.as_mut().unwrap();
+        config.width = new_width;
+        config.height = new_height;
+
+        // Clone config and device, then configure surface
+        let config_clone = config.clone();
+        let device = this.device.clone();
+        let surface = this.surface.as_ref().unwrap();
+
+        surface.configure(&device, &config_clone);
+
+        Ok(())
     }
 }
 

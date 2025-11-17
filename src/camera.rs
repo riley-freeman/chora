@@ -110,6 +110,26 @@ impl Camera {
 
         Ok(Self(Arc::new(Mutex::new(inner))))
     }
+
+    pub fn width(&self) -> u32 {
+        let lock = self.0.lock().unwrap();
+        lock.output_images[0].width()
+    }
+
+    pub fn height(&self) -> u32 {
+        let lock = self.0.lock().unwrap();
+        lock.output_images[0].height()
+    }
+
+    pub(crate) fn current_output_texture_view(&self) -> TextureView {
+        let lock = self.0.lock().unwrap();
+        lock.output_image_views[0].clone()
+    }
+
+    pub(crate) fn current_output_texture_raw(&self) -> Texture {
+        let lock = self.0.lock().unwrap();
+        lock.output_images[0].clone()
+    }
 }
 
 unsafe impl Sync for Camera {}

@@ -16,3 +16,4 @@ bitflags = "2.9.4"
 numtraits = "0.0.1"
 naga = { version="27.0.3", features = ["wgsl-in", "wgsl-out"] }
 regex = "1.11.1"
+raw-window-handle = "0.6.0"
