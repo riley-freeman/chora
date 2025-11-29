@@ -1,0 +1,691 @@
+﻿cargo :    Compiling chora v0.1.0 (C:\Users\mngis\Code 
+Repository\0x99CHORA)
+At line:1 char:1
++ cargo run --example triangle 2>&1 | Out-File 
+-Encoding utf8 output.tx ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compil 
+   ing ch...tory\0x99CHORA):String) [], RemoteExcepti  
+  on
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unused variable: `instanced_render`
+   --> src\lib.rs:712:29
+    |
+712 |                 if let Some(instanced_render) = 
+this.mesh_instanced_renders.get(mesh_address) {
+    |                             ^^^^^^^^^^^^^^^^ 
+help: if this is intentional, prefix it with an 
+underscore: `_instanced_render`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: method `current_output_texture_raw` is never 
+used
+   --> src\camera.rs:129:19
+    |
+49  | impl Camera {
+    | ----------- method in this implementation
+...
+129 |     pub(crate) fn 
+current_output_texture_raw(&self) -> Texture {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: method `lock` is never used
+   --> src\render_pipeline.rs:318:19
+    |
+48  | impl RenderPipeline {
+    | ------------------- method in this implementation
+...
+318 |     pub(crate) fn lock(&'_ self) -> 
+MutexGuard<'_, RenderPipelineInner> {
+    |                   ^^^^
+
+warning: `chora` (lib) generated 3 warnings
+warning: unused import: `ControlFlow`
+ --> examples\triangle.rs:5:18
+  |
+5 |     event_loop::{ControlFlow, EventLoop},
+  |                  ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `std::path::Path`
+ --> examples\triangle.rs:8:5
+  |
+8 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: `chora` (example "triangle") generated 2 
+warnings (run `cargo fix --example "triangle"` to 
+apply 2 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] 
+target(s) in 5.69s
+     Running `target\debug\examples\triangle.exe`
+Render start
+Drawing mesh with 3 indices
+[2025-11-22T21:31:51Z ERROR wgpu::backend::wgpu_core] 
+Handling wgpu errors as fatal by default
+
+thread 'main' panicked at C:\Users\mngis\.cargo\registr
+y\src\index.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\
+backend\wgpu_core.rs:1195:26:
+wgpu error: Validation Error
+
+Caused by:
+  In Device::create_bind_group, label = 'Present Bind 
+Group'
+    Usage flags TextureUsages(RENDER_ATTACHMENT) of 
+TextureView with '' label do not contain required 
+usage flags TextureUsages(TEXTURE_BINDING)
+
+
+stack backtrace:
+   0: std::panicking::begin_panic_handler
+             at /rustc/29483883eed69d5fb4db01964cdf2af4
+d86e9cb2/library\std\src\panicking.rs:697
+   1: core::panicking::panic_fmt
+             at /rustc/29483883eed69d5fb4db01964cdf2af4
+d86e9cb2/library\core\src\panicking.rs:75
+   2: wgpu::backend::wgpu_core::default_error_handler
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\backend\wg
+pu_core.rs:659
+   3: 
+wgpu::backend::wgpu_core::ErrorSinkRaw::handle_error
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\backend\wg
+pu_core.rs:643
+   4: wgpu::backend::wgpu_core::ContextWgpuCore::handle
+_error_inner
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\backend\wg
+pu_core.rs:298
+   5: wgpu::backend::wgpu_core::ContextWgpuCore::handle
+_error<enum2$<wgpu_core::binding_model::CreateBindGroup
+Error> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\backend\wg
+pu_core.rs:311
+   6: 
+wgpu::backend::wgpu_core::impl$12::create_bind_group
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\backend\wg
+pu_core.rs:1195
+   7: wgpu::api::device::Device::create_bind_group
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\wgpu-26.0.1\src\api\device
+.rs:220
+   8: chora::Renderer::present
+             at .\src\lib.rs:585
+   9: triangle::main::closure$0
+             at .\examples\triangle.rs:100
+  10: winit::platform_impl::platform::event_loop::impl$
+3::run_on_demand::closure$0<tuple$<>,triangle::main::cl
+osure_env$0>
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:236
+  11: alloc::boxed::impl$29::call_mut<tuple$<enum2$<win
+it::event::Event<tuple$<> > > >,dyn$<core::ops::functio
+n::FnMut<tuple$<enum2$<winit::event::Event<tuple$<> > 
+> >,assoc$<Output,tuple$<> > > >,alloc::alloc::Global>
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\a
+lloc\src\boxed.rs:1973
+  12: winit::platform_impl::platform::event_loop::runne
+r::impl$3::call_event_handler::closure$0<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop\runner.rs:250
+  13: core::panic::unwind_safe::impl$25::call_once<tupl
+e$<>,winit::platform_impl::platform::event_loop::runner
+::impl$3::call_event_handler::closure_env$0<tuple$<> > 
+>
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\c
+ore\src\panic\unwind_safe.rs:272
+  14: std::panicking::catch_unwind::do_call<core::panic
+::unwind_safe::AssertUnwindSafe<winit::platform_impl::p
+latform::event_loop::runner::impl$3::call_event_handler
+::closure_env$0<tuple$<> > >,tuple$<> >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\s
+td\src\panicking.rs:589
+  15: std::panic::catch_unwind<core::panic::unwind_safe
+::AssertUnwindSafe<winit::platform_impl::platform::even
+t_loop::public_window_callback_inner::closure_env$4<tup
+le$<> > >,tuple$<> >
+  16: std::panicking::catch_unwind
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\s
+td\src\panicking.rs:552
+  17: std::panic::catch_unwind<core::panic::unwind_safe
+::AssertUnwindSafe<winit::platform_impl::platform::even
+t_loop::runner::impl$3::call_event_handler::closure_env
+$0<tuple$<> > >,tuple$<> >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\s
+td\src\panic.rs:359
+  18: winit::platform_impl::platform::event_loop::runne
+r::EventLoopRunner<tuple$<> >::catch_unwind<tuple$<>,tu
+ple$<>,winit::platform_impl::platform::event_loop::runn
+er::impl$3::call_event_handler::closure_env$0<tuple$<> 
+> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop\runner.rs:183
+  19: winit::platform_impl::platform::event_loop::runne
+r::EventLoopRunner<tuple$<> 
+>::call_event_handler<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop\runner.rs:246
+  20: winit::platform_impl::platform::event_loop::runne
+r::EventLoopRunner<tuple$<> >::send_event<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop\runner.rs:224
+  21: winit::platform_impl::platform::event_loop::Windo
+wData<tuple$<> >::send_event<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:112
+  22: winit::platform_impl::platform::event_loop::publi
+c_window_callback_inner::closure$4<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:1144
+  23: core::ops::function::FnOnce::call_once<winit::pla
+tform_impl::platform::event_loop::public_window_callbac
+k_inner::closure_env$4<tuple$<> >,tuple$<> >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\c
+ore\src\ops\function.rs:250
+  24: core::panic::unwind_safe::impl$25::call_once<tupl
+e$<>,winit::platform_impl::platform::event_loop::public
+_window_callback_inner::closure_env$4<tuple$<> > >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\c
+ore\src\panic\unwind_safe.rs:272
+  25: std::panicking::catch_unwind::do_call<core::panic
+::unwind_safe::AssertUnwindSafe<winit::platform_impl::p
+latform::event_loop::public_window_callback_inner::clos
+ure_env$4<tuple$<> > >,tuple$<> >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\s
+td\src\panicking.rs:589
+  26: std::panic::catch_unwind<core::panic::unwind_safe
+::AssertUnwindSafe<winit::platform_impl::platform::even
+t_loop::public_window_callback_inner::closure_env$4<tup
+le$<> > >,tuple$<> >
+  27: std::panicking::catch_unwind
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\s
+td\src\panicking.rs:552
+  28: std::panic::catch_unwind<core::panic::unwind_safe
+::AssertUnwindSafe<winit::platform_impl::platform::even
+t_loop::public_window_callback_inner::closure_env$4<tup
+le$<> > >,tuple$<> >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\s
+td\src\panic.rs:359
+  29: winit::platform_impl::platform::event_loop::runne
+r::EventLoopRunner<tuple$<> >::catch_unwind<tuple$<>,tu
+ple$<>,winit::platform_impl::platform::event_loop::publ
+ic_window_callback_inner::closure_env$4<tuple$<> > >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop\runner.rs:183
+  30: winit::platform_impl::platform::event_loop::publi
+c_window_callback_inner<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:2287
+  31: winit::platform_impl::platform::event_loop::publi
+c_window_callback<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:983
+  32: CallWindowProcW
+  33: SendMessageW
+  34: GetWindowDpiAwarenessContext
+  35: KiUserCallbackDispatcher
+  36: NtUserDispatchMessage
+  37: IsWindowUnicode
+  38: winit::platform_impl::platform::event_loop::Event
+Loop<tuple$<> >::dispatch_peeked_messages<tuple$<> >
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:449
+  39: winit::platform_impl::platform::event_loop::Event
+Loop<tuple$<> >::run_on_demand<tuple$<>,triangle::main:
+:closure_env$0>
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:247
+  40: winit::platform_impl::platform::event_loop::Event
+Loop<tuple$<> 
+>::run<tuple$<>,triangle::main::closure_env$0>
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\platform
+_impl\windows\event_loop.rs:218
+  41: winit::event_loop::EventLoop<tuple$<> 
+>::run<tuple$<>,triangle::main::closure_env$0>
+             at C:\Users\mngis\.cargo\registry\src\inde
+x.crates.io-1949cf8c6b5b557f\winit-0.29.15\src\event_lo
+op.rs:249
+  42: triangle::main
+             at .\examples\triangle.rs:80
+  43: core::ops::function::FnOnce::call_once<void 
+(*)(),tuple$<> >
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\c
+ore\src\ops\function.rs:250
+  44: core::hint::black_box
+             at C:\Users\mngis\.rustup\toolchains\stabl
+e-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\c
+ore\src\hint.rs:482
+note: Some details are omitted, run with 
+`RUST_BACKTRACE=full` for a verbose backtrace.
+
+thread 'main' panicked at C:\Users\mngis\.cargo\registr
+y\src\index.crates.io-1949cf8c6b5b557f\wgpu-hal-26.0.4\
+src\vulkan\instance.rs:192:58:
+Trying to destroy a SurfaceAcquireSemaphores that is 
+still in use by a SurfaceTexture
+stack backtrace:
+   0:     0x7ff76660d0e2 - 
+std::backtrace_rs::backtrace::win64::trace
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\..\..\backtr
+ace\src\backtrace\win64.rs:85
+   1:     0x7ff76660d0e2 - 
+std::backtrace_rs::backtrace::trace_unsynchronized
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\..\..\backtr
+ace\src\backtrace\mod.rs:66
+   2:     0x7ff76660d0e2 - 
+std::sys::backtrace::_print_fmt
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\sys\backtrac
+e.rs:66
+   3:     0x7ff76660d0e2 - 
+std::sys::backtrace::impl$0::print::impl$0::fmt
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\sys\backtrac
+e.rs:39
+   4:     0x7ff766621ecb - core::fmt::rt::Argument::fmt
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\core\src\fmt\rt.rs:1
+73
+   5:     0x7ff766621ecb - core::fmt::write
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\core\src\fmt\mod.rs:
+1465
+   6:     0x7ff76660ae67 - std::io::default_write_fmt
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\io\mod.rs:63
+9
+   7:     0x7ff76660ae67 - std::io::Write::write_fmt<st
+d::sys::stdio::windows::Stderr>
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\io\mod.rs:19
+54
+   8:     0x7ff76660cf25 - 
+std::sys::backtrace::BacktraceLock::print
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\sys\backtrac
+e.rs:42
+   9:     0x7ff76660ea9f - 
+std::panicking::default_hook::closure$0
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:300
+  10:     0x7ff76660e835 - std::panicking::default_hook
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:327
+  11:     0x7ff76660f63d - 
+std::panicking::rust_panic_with_hook
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:833
+  12:     0x7ff76660f3e9 - 
+std::panicking::begin_panic_handler::closure$0
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:706
+  13:     0x7ff76660d7df - std::sys::backtrace::__rust_
+end_short_backtrace<std::panicking::begin_panic_handler
+::closure_env$0,never$>
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\sys\backtrac
+e.rs:168
+  14:     0x7ff76660effe - 
+std::panicking::begin_panic_handler
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:697
+  15:     0x7ff76662c291 - core::panicking::panic_fmt
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\core\src\panicking.r
+s:75
+  16:     0x7ff76662c26c - 
+core::panicking::panic_display
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\core\src\panicking.r
+s:268
+  17:     0x7ff76662c26c - core::option::expect_failed
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\core\src\option.rs:2
+081
+  18:     0x7ff765f8aad4 - enum2$<core::option::Option<
+lock_api::mutex::Mutex<parking_lot::raw_mutex::RawMutex
+,wgpu_hal::vulkan::SwapchainAcquireSemaphore> > >::expe
+ct<lock_api::mutex::Mutex<parking_lot::raw_mutex::RawMu
+tex,wgpu_hal::vulkan::SwapchainAcquireSemaphore> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\option.rs:960
+  19:     0x7ff765f22f00 - 
+wgpu_hal::vulkan::Swapchain::release_resources
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-hal
+-26.0.4\src\vulkan\instance.rs:192
+  20:     0x7ff765f273c0 - 
+wgpu_hal::vulkan::instance::impl$7::unconfigure
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-hal
+-26.0.4\src\vulkan\instance.rs:1055
+  21:     0x7ff765b7e509 - wgpu_hal::dynamic::surface::
+impl$0::unconfigure<wgpu_hal::vulkan::Surface>
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-hal
+-26.0.4\src\dynamic\surface.rs:50
+  22:     0x7ff765ca3e3b - 
+wgpu_core::instance::impl$5::drop
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-cor
+e-26.0.1\src\instance.rs:619
+  23:     0x7ff765b6b01f - 
+core::ptr::drop_in_place<wgpu_core::instance::Surface>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  24:     0x7ff765ba5cc8 - alloc::sync::Arc<wgpu_core::
+instance::Surface,alloc::alloc::Global>::drop_slow<wgpu
+_core::instance::Surface,alloc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:1943
+  25:     0x7ff765baa005 - alloc::sync::impl$38::drop<w
+gpu_core::instance::Surface,alloc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:2686
+  26:     0x7ff765b72d9e - core::ptr::drop_in_place<all
+oc::sync::Arc<wgpu_core::instance::Surface,alloc::alloc
+::Global> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  27:     0x7ff765d1982f - 
+wgpu_core::global::Global::surface_drop
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-cor
+e-26.0.1\src\instance.rs:1013
+  28:     0x7ff765b1fd04 - 
+wgpu::backend::wgpu_core::impl$55::drop
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\wgpu-26.
+0.1\src\backend\wgpu_core.rs:3583
+  29:     0x7ff765aea6bf - core::ptr::drop_in_place<wgp
+u::backend::wgpu_core::CoreSurface>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  30:     0x7ff765b09ca8 - alloc::sync::Arc<wgpu::backe
+nd::wgpu_core::CoreSurface,alloc::alloc::Global>::drop_
+slow<wgpu::backend::wgpu_core::CoreSurface,alloc::alloc
+::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:1943
+  31:     0x7ff765b0ad45 - alloc::sync::impl$38::drop<w
+gpu::backend::wgpu_core::CoreSurface,alloc::alloc::Glob
+al>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:2686
+  32:     0x7ff765aec1ae - core::ptr::drop_in_place<all
+oc::sync::Arc<wgpu::backend::wgpu_core::CoreSurface,all
+oc::alloc::Global> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  33:     0x7ff765ae9f88 - core::ptr::drop_in_place<enu
+m2$<wgpu::dispatch::DispatchSurface> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  34:     0x7ff7657d668f - 
+core::ptr::drop_in_place<wgpu::api::surface::Surface>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  35:     0x7ff7657d8015 - core::ptr::drop_in_place<enu
+m2$<core::option::Option<wgpu::api::surface::Surface> 
+> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  36:     0x7ff7657d5e4b - 
+core::ptr::drop_in_place<chora::RendererInner>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  37:     0x7ff7657d7d4e - core::ptr::drop_in_place<cor
+e::cell::UnsafeCell<chora::RendererInner> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  38:     0x7ff7657d82d2 - core::ptr::drop_in_place<std
+::sync::poison::mutex::Mutex<chora::RendererInner> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  39:     0x7ff7657dcd18 - alloc::sync::Arc<std::sync::
+poison::mutex::Mutex<chora::RendererInner>,alloc::alloc
+::Global>::drop_slow<std::sync::poison::mutex::Mutex<ch
+ora::RendererInner>,alloc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:1943
+  40:     0x7ff7657d8fb5 - alloc::sync::impl$38::drop<s
+td::sync::poison::mutex::Mutex<chora::RendererInner>,al
+loc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:2686
+  41:     0x7ff7657d506e - core::ptr::drop_in_place<all
+oc::sync::Arc<std::sync::poison::mutex::Mutex<chora::Re
+ndererInner>,alloc::alloc::Global> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  42:     0x7ff7657d5cae - 
+core::ptr::drop_in_place<chora::Renderer>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  43:     0x7ff7657d67ed - 
+core::ptr::drop_in_place<chora::texture::TextureInner>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  44:     0x7ff7657dcc38 - alloc::sync::Arc<chora::text
+ure::TextureInner,alloc::alloc::Global>::drop_slow<chor
+a::texture::TextureInner,alloc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:1943
+  45:     0x7ff7657d92d5 - alloc::sync::impl$38::drop<c
+hora::texture::TextureInner,alloc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\sync.rs:2686
+  46:     0x7ff7657d7e4e - core::ptr::drop_in_place<all
+oc::sync::Arc<chora::texture::TextureInner,alloc::alloc
+::Global> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  47:     0x7ff7657d641e - 
+core::ptr::drop_in_place<chora::texture::Texture>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  48:     0x7ff7657d6cb0 - core::ptr::drop_in_place<sli
+ce2$<chora::texture::Texture> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  49:     0x7ff7657d8bc3 - alloc::vec::impl$25::drop<ch
+ora::texture::Texture,alloc::alloc::Global>
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\alloc\src\vec\mod.rs:3836
+  50:     0x7ff7657d7a0f - core::ptr::drop_in_place<all
+oc::vec::Vec<chora::texture::Texture,alloc::alloc::Glob
+al> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ptr\mod.rs:799
+  51:     0x7ff76571330d - triangle::main
+                               at C:\Users\mngis\Code 
+Repository\0x99CHORA\examples\triangle.rs:105
+  52:     0x7ff9c3790500 - _CxxFrameHandler3
+  53:     0x7ff9c3783a91 - is_exception_typeof
+  54:     0x7ff9c378f978 - _C_specific_handler
+  55:     0x7ff9c3782c78 - is_exception_typeof
+  56:     0x7ff9c3790311 - _CxxFrameHandler3
+  57:     0x7ff9e0ea647f - _chkstk
+  58:     0x7ff9e0d4e593 - RtlUnwindEx
+  59:     0x7ff9c378fe76 - _C_specific_handler
+  60:     0x7ff9c37818f2 - is_exception_typeof
+  61:     0x7ff9c3781d17 - is_exception_typeof
+  62:     0x7ff9c3782d61 - is_exception_typeof
+  63:     0x7ff9c3790311 - _CxxFrameHandler3
+  64:     0x7ff9e0ea63ff - _chkstk
+  65:     0x7ff9e0d52327 - RtlLocateExtendedFeature
+  66:     0x7ff9e0d4a961 - RtlRaiseException
+  67:     0x7ff9de4b80da - RaiseException
+  68:     0x7ff9c3785277 - CxxThrowException
+  69:     0x7ff766613670 - panic_unwind::imp::panic
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\panic_unwind\src\seh
+.rs:355
+  70:     0x7ff766613670 - 
+panic_unwind::__rust_start_panic
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\panic_unwind\src\lib
+.rs:103
+  71:     0x7ff76660f965 - std::panicking::rust_panic
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:894
+  72:     0x7ff76660f8a0 - 
+std::panicking::rust_panic_without_hook
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:885
+  73:     0x7ff76660b36f - std::panic::resume_unwind
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panic.rs:391
+  74:     0x7ff765718a38 - winit::platform_impl::platfo
+rm::event_loop::EventLoop<tuple$<> 
+>::dispatch_peeked_messages<tuple$<> >
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\winit-0.
+29.15\src\platform_impl\windows\event_loop.rs:455
+  75:     0x7ff765718654 - winit::platform_impl::platfo
+rm::event_loop::EventLoop<tuple$<> >::run_on_demand<tup
+le$<>,triangle::main::closure_env$0>
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\winit-0.
+29.15\src\platform_impl\windows\event_loop.rs:247
+  76:     0x7ff765719152 - winit::platform_impl::platfo
+rm::event_loop::EventLoop<tuple$<> 
+>::run<tuple$<>,triangle::main::closure_env$0>
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\winit-0.
+29.15\src\platform_impl\windows\event_loop.rs:218
+  77:     0x7ff765711cc7 - 
+winit::event_loop::EventLoop<tuple$<> 
+>::run<tuple$<>,triangle::main::closure_env$0>
+                               at C:\Users\mngis\.cargo
+\registry\src\index.crates.io-1949cf8c6b5b557f\winit-0.
+29.15\src\event_loop.rs:249
+  78:     0x7ff765713064 - triangle::main
+                               at C:\Users\mngis\Code 
+Repository\0x99CHORA\examples\triangle.rs:80
+  79:     0x7ff7657282ab - 
+core::ops::function::FnOnce::call_once<void 
+(*)(),tuple$<> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\ops\function.rs:250
+  80:     0x7ff765731a7e - core::hint::black_box
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\core\src\hint.rs:482
+  81:     0x7ff765731a7e - 
+std::sys::backtrace::__rust_begin_short_backtrace<void 
+(*)(),tuple$<> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\std\src\sys\backtrace.rs:152
+  82:     0x7ff765730bc1 - 
+std::rt::lang_start::closure$0<tuple$<> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\std\src\rt.rs:206
+  83:     0x7ff766603c25 - 
+std::rt::lang_start_internal::closure$0
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\rt.rs:175
+  84:     0x7ff766603c25 - 
+std::panicking::catch_unwind::do_call
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:589
+  85:     0x7ff766603c25 - std::panicking::catch_unwind
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panicking.rs
+:552
+  86:     0x7ff766603c25 - std::panic::catch_unwind
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\panic.rs:359
+  87:     0x7ff766603c25 - std::rt::lang_start_internal
+                               at /rustc/29483883eed69d
+5fb4db01964cdf2af4d86e9cb2/library\std\src\rt.rs:171
+  88:     0x7ff765730baa - 
+std::rt::lang_start<tuple$<> >
+                               at C:\Users\mngis\.rustu
+p\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\
+src\rust\library\std\src\rt.rs:205
+  89:     0x7ff765713419 - main
+  90:     0x7ff766629e00 - invoke_main
+                               at D:\a\_work\1\s\src\vc
+tools\crt\vcstartup\src\startup\exe_common.inl:78
+  91:     0x7ff766629e00 - __scrt_common_main_seh
+                               at D:\a\_work\1\s\src\vc
+tools\crt\vcstartup\src\startup\exe_common.inl:288
+  92:     0x7ff9df71e8d7 - BaseThreadInitThunk
+  93:     0x7ff9e0dcc53c - RtlUserThreadStart
+error: process didn't exit successfully: 
+`target\debug\examples\triangle.exe` (exit code: 
+0xc0000409, STATUS_STACK_BUFFER_OVERRUN)

@@ -30,10 +30,11 @@ pub(crate) struct RenderPipelineInner {
 
     _uniform_bind_group_layout: wgpu::BindGroupLayout,
     _texture_bind_group_layout: wgpu::BindGroupLayout,
-    _texture_bind_group: wgpu::BindGroup,
+    pub(crate) _texture_bind_group: wgpu::BindGroup,
 
     _pipeline_layout: wgpu::PipelineLayout,
-    _render_pipeline: wgpu::RenderPipeline,
+    pub(crate) _render_pipeline: wgpu::RenderPipeline,
+    pub(crate) texture_bind_group_index: u32,
 }
 
 #[derive(Clone)]
@@ -125,9 +126,17 @@ impl RenderPipeline {
             source: wgpu::ShaderSource::Wgsl(shader.clone().into()),
         });
 
+        let mut bind_group_layouts = Vec::new();
+        let mut texture_bind_group_index = 0;
+        if !flags.is_empty() {
+            bind_group_layouts.push(&uniform_bind_group_layout);
+            texture_bind_group_index = 1;
+        }
+        bind_group_layouts.push(&texture_bind_group_layout);
+
         let desc = PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout],
+            bind_group_layouts: &bind_group_layouts,
             push_constant_ranges: &[],
         };
         let pipeline_layout = device.create_pipeline_layout(&desc);
@@ -142,7 +151,28 @@ impl RenderPipeline {
                 module: &shader_module,
                 compilation_options: Default::default(),
                 entry_point: Some("vs_main"),
-                buffers: &[],
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: 24,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            // Position
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x3,
+                            },
+
+
+                            // Color
+                            wgpu::VertexAttribute {
+                                offset: 12,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32x3,
+                            },
+                        ],
+                    }
+                ],
             },
             #[allow(unused)]
             fragment: Some(FragmentState {
@@ -169,6 +199,7 @@ impl RenderPipeline {
             _texture_bind_group: texture_bind_group,
             _pipeline_layout: pipeline_layout,
             _render_pipeline: render_pipeline,
+            texture_bind_group_index,
         };
 
         Self {

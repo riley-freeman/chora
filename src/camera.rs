@@ -1,9 +1,12 @@
 use std::sync::{Arc, Mutex};
 use std::default::Default;
-use std::mem::size_of;
+use std::mem::{self, offset_of, size_of};
 
+use bytemuck::{NoUninit, Pod, Zeroable};
+use cgmath::{Matrix4, Vector3, Rad, Quaternion, Rotation3, PerspectiveFov, Ortho};
+use naga::proc::index;
 use wgpu::wgt::BufferDescriptor;
-use wgpu::{BufferUsages, ColorTargetState, ColorWrites};
+use wgpu::{BufferUsages, BufferViewMut, ColorTargetState, ColorWrites};
 use wgpu::TextureViewDescriptor;
 use wgpu::Buffer;
 use wgpu::CompareFunction::Less;
@@ -28,22 +31,23 @@ struct CameraInner {
     yaw: *const f32,
     roll: *const f32,
 
+    view_proj_matrix: Matrix4<f32>,
+    camera_buffers: Vec<Buffer>,
+
     output_images: Vec<Texture>,
     depth_image: Texture,
 
     output_image_views: Vec<TextureView>,
     depth_image_view: TextureView,
-
-    camera_buffers: Vec<Buffer>,
 }
 
 #[derive(Clone)]
 pub struct Camera(Arc<Mutex<CameraInner>>);
 
 #[allow(unused)]
+#[derive(Debug, Clone, Pod)]
 struct CameraBufferStruct {
-    view_matrix: cgmath::Matrix4<f32>,
-    proj_matrix: cgmath::Matrix4<f32>,
+    view_proj_matrix: cgmath::Matrix4<f32>,
 }
 
 impl Camera {
@@ -79,19 +83,43 @@ impl Camera {
 
         // Create a depth image
         let (depth_image, depth_image_view) = create_depth_texture(device, width, height);
+        
+        // Compute initial view-projection matrix
+        let view_proj_matrix = Self::compute_view_proj_matrix(
+            position,
+            pitch,
+            yaw,
+            roll,
+            fov,
+            orthographic,
+            width,
+            height,
+        );
 
         // Create a camera buffer... for View Projection Matrices
         let mut camera_buffers = Vec::new();
         for _ in 0..buffers {
             let buffer = device.create_buffer(&BufferDescriptor {
                 size: size_of::<CameraBufferStruct>() as u64,
-                mapped_at_creation: false,
+                mapped_at_creation: true,
                 usage: BufferUsages::UNIFORM,
 
                 label: None,
             });
+            
+            // Write the view projection matrix to the uniform buffer
+            {
+                let offset = offset_of!(CameraBufferStruct, view_proj_matrix) as u64;
+                let size = size_of::<Matrix4<f32>>() as u64;
+                let mut view = buffer.get_mapped_range_mut(offset..size);
+                view.copy_from_slice(unsafe {mem::transmute_copy(&view_proj_matrix)});
+            }
+            buffer.unmap();
+
             camera_buffers.push(buffer);
         }
+
+
 
         let inner = CameraInner {
             fov, 
@@ -101,14 +129,115 @@ impl Camera {
             pitch: pitch as _,
             yaw: yaw as _, 
             roll: roll as _, 
+            view_proj_matrix,
+            camera_buffers,
             output_images, 
             depth_image,
             output_image_views,
             depth_image_view,
-            camera_buffers,
         };
 
         Ok(Self(Arc::new(Mutex::new(inner))))
+    }
+
+    /// Compute the view-projection matrix from camera parameters
+    ///
+    /// # Arguments
+    /// * `position` - Camera position in world space
+    /// * `pitch` - Rotation around X-axis (in radians)
+    /// * `yaw` - Rotation around Y-axis (in radians)
+    /// * `roll` - Rotation around Z-axis (in radians)
+    /// * `fov` - Field of view (in degrees for perspective, or size for orthographic)
+    /// * `orthographic` - Whether to use orthographic projection
+    /// * `width` - Viewport width in pixels
+    /// * `height` - Viewport height in pixels
+    ///
+    /// # Returns
+    /// The combined view-projection matrix
+    pub fn compute_view_proj_matrix(
+        position: &[f32; 3],
+        pitch: &f32,
+        yaw: &f32,
+        roll: &f32,
+        fov: f32,
+        orthographic: bool,
+        width: u32,
+        height: u32,
+    ) -> Matrix4<f32> {
+        // Compute view matrix
+        let view_matrix = Self::compute_view_matrix(position, pitch, yaw, roll);
+        
+        // Compute projection matrix
+        let proj_matrix = Self::compute_projection_matrix(fov, orthographic, width, height);
+        
+        // Combine: projection * view
+        proj_matrix * view_matrix
+    }
+
+    /// Compute the view matrix from camera position and rotation
+    fn compute_view_matrix(
+        position: &[f32; 3],
+        pitch: &f32,
+        yaw: &f32,
+        roll: &f32,
+    ) -> Matrix4<f32> {
+        // Create rotation quaternions from Euler angles
+        // Order: Z (roll) -> X (pitch) -> Y (yaw)
+        let rotation_x = Quaternion::from_angle_x(Rad(*pitch));
+        let rotation_y = Quaternion::from_angle_y(Rad(*yaw));
+        let rotation_z = Quaternion::from_angle_z(Rad(*roll));
+        let rotation_quat = rotation_y * rotation_x * rotation_z;
+        let rotation_matrix = Matrix4::from(rotation_quat);
+        
+        // Create translation matrix (negative position because we're moving the world, not the camera)
+        let translation = Matrix4::from_translation(Vector3::new(-position[0], -position[1], -position[2]));
+        
+        // View matrix = rotation * translation
+        // The rotation is applied first, then translation
+        rotation_matrix * translation
+    }
+
+    /// Compute the projection matrix
+    fn compute_projection_matrix(
+        fov: f32,
+        orthographic: bool,
+        width: u32,
+        height: u32,
+    ) -> Matrix4<f32> {
+        let aspect = width as f32 / height as f32;
+        
+        if orthographic {
+            // Orthographic projection
+            // fov is used as the size/scale of the orthographic view
+            let half_size = fov * 0.5;
+            let left = -half_size * aspect;
+            let right = half_size * aspect;
+            let bottom = -half_size;
+            let top = half_size;
+            let near = 0.1;
+            let far = 1000.0;
+            
+            Matrix4::from(Ortho {
+                left,
+                right,
+                bottom,
+                top,
+                near,
+                far,
+            })
+        } else {
+            // Perspective projection
+            let fov_rad = Rad(fov.to_radians());
+            let near = 0.1;
+            let far = 1000.0;
+            
+            Matrix4::from(PerspectiveFov {
+                fovy: fov_rad,
+                aspect,
+                near,
+                far,
+            })
+        }
     }
 
     pub fn width(&self) -> u32 {
@@ -129,6 +258,16 @@ impl Camera {
     pub(crate) fn current_output_texture_raw(&self) -> Texture {
         let lock = self.0.lock().unwrap();
         lock.output_images[0].clone()
+    }
+
+    pub(crate) fn depth_texture_view(&self) -> TextureView {
+        let lock = self.0.lock().unwrap();
+        lock.depth_image_view.clone()
+    }
+
+    pub(crate) fn uniform_buffer(&self, index: usize) -> Option<wgpu::Buffer> {
+        let lock = self.0.lock().unwrap();
+        lock.camera_buffers.get(index).map(|r| r.clone())
     }
 }
 
@@ -236,7 +375,7 @@ fn texture_view_desc<'a>(format: TextureFormat) -> TextureViewDescriptor<'a> {
         base_mip_level: 0,
         dimension: Some(wgpu::TextureViewDimension::D2),
         format: Some(format),
-        usage: Some(TextureUsages::RENDER_ATTACHMENT),
+        usage: Some(TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING),
 
         label: None,
     }
