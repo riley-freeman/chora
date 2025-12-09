@@ -742,6 +742,9 @@ impl Renderer {
                             if let Some(mesh_inner) = weak_mesh.upgrade() {
                                 let mesh_lock = mesh_inner.lock().unwrap();
                                 render_pass.set_vertex_buffer(0, mesh_lock._vertex_buffer.slice(..));
+                                if let Some(model) = mesh_lock.get_parent_model() {
+                                    render_pass.set_vertex_buffer(1, model.model_buffer().slice(..))
+                                }
                                 render_pass.set_index_buffer(mesh_lock._index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                                 
                                 // Calculate index count

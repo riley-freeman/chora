@@ -44,11 +44,15 @@ struct CameraInner {
 #[derive(Clone)]
 pub struct Camera(Arc<Mutex<CameraInner>>);
 
-#[allow(unused)]
-#[derive(Debug, Clone, Pod)]
-struct CameraBufferStruct {
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct CameraBufferStruct {
     view_proj_matrix: cgmath::Matrix4<f32>,
 }
+
+// Safety: ModelBufferStruct is repr(C) and contains only Matrix4<f32> which is Pod
+unsafe impl bytemuck::Pod for CameraBufferStruct {}
+unsafe impl bytemuck::Zeroable for CameraBufferStruct {}
 
 impl Camera {
     pub fn new(

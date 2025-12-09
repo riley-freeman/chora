@@ -2,7 +2,6 @@ use cgmath::{Matrix4, Vector3, Rad, Quaternion, Rotation3};
 use wgpu::{BindGroup, BindGroupEntry, BindGroupLayout, BindingResource, Buffer, BufferBinding, BufferUsages, Queue};
 use wgpu::Device;
 use wgpu::wgt::BufferDescriptor;
-use crate::camera::Camera;
 use crate::mesh::{Mesh, WeakModel};
 
 use std::mem;
@@ -17,11 +16,7 @@ pub(crate) struct ModelInner {
     pub(crate) scale: *const Vector3<f32>,
 
     pub(crate) model_buffer: Buffer,
-    pub(crate) bind_group: BindGroup,
-
-
-    // Cached model matrix (updated when position/rotation/scale change)
-    pub(crate) model_matrix: Mutex<Matrix4<f32>>,
+    pub(crate) model_buffer_info: Mutex<ModelBufferStruct>,
 }
 
 pub struct Model {
@@ -30,13 +25,19 @@ pub struct Model {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct ModelBufferStruct {
-    model_matrix: Matrix4<f32>
+pub(crate) struct ModelBufferStruct {
+    pub(crate) model_matrix: Matrix4<f32>
 }
 
 // Safety: ModelBufferStruct is repr(C) and contains only Matrix4<f32> which is Pod
 unsafe impl bytemuck::Pod for ModelBufferStruct {}
 unsafe impl bytemuck::Zeroable for ModelBufferStruct {}
+
+impl Default for ModelBufferStruct {
+    fn default() -> Self {
+        ModelBufferStruct { model_matrix: Matrix4::from_scale(1.0) }
+    }
+}
 
 impl Model {
     pub fn new(device: &Device, meshes: Vec<Mesh>, mutable: bool, bind_group_layout: BindGroupLayout, world_buffer: Option<Buffer>, camera_buffer: Option<Buffer>,
@@ -50,32 +51,17 @@ impl Model {
             label: Some("Model Buffer"),
         });
 
-        // Compute initial model matrix
-        let initial_matrix = unsafe {
-            Self::compute_matrix(
-                &*(position as *const Vector3<f32>),
-                &*(rotation as *const Vector3<f32>),
-                &*(scale as *const Vector3<f32>),
-            )
-        };
-
-
-        let mut entries = vec![];
-        if let Some(_) = world_buffer {
-            let entry = create_buffer_group_entry(world_buffer.as_ref().unwrap(), 0);
-            entries.push(entry);
-        }
-        if let Some(_) = camera_buffer {
-            let entry = create_buffer_group_entry(camera_buffer.as_ref().unwrap(), 1);
-            entries.push(entry);
-        }
-        entries.push(create_buffer_group_entry(&model_buffer, 2));
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &entries,
+        let model_buffer_info = Mutex::new(unsafe {
+            ModelBufferStruct {
+                model_matrix: Self::compute_matrix(
+                    &*(position as *const Vector3<f32>),
+                    &*(rotation as *const Vector3<f32>),
+                    &*(scale as *const Vector3<f32>),
+                )
+            }
         });
+        
+
 
         let inner = ModelInner {
             mutable,
@@ -86,8 +72,7 @@ impl Model {
             scale: scale as _,
 
             model_buffer,
-            model_matrix: Mutex::new(initial_matrix),
-            bind_group,
+            model_buffer_info,
         };
 
         let model = Self {
@@ -125,7 +110,7 @@ impl Model {
 
     /// Get the current model matrix
     pub fn model_matrix(&self) -> Matrix4<f32> {
-        *self.inner.model_matrix.lock().unwrap()
+        self.inner.model_buffer_info.lock().unwrap().model_matrix
     }
 
     /// Update the model matrix from the current position/rotation/scale values
@@ -138,7 +123,7 @@ impl Model {
             let scale = &*self.inner.scale;
 
             let new_matrix = Self::compute_matrix(position, rotation, scale);
-            *self.inner.model_matrix.lock().unwrap() = new_matrix;
+            self.inner.model_buffer_info.lock().unwrap().model_matrix = new_matrix;
         }
     }
 

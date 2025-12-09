@@ -1,4 +1,4 @@
-use std::slice;
+use std::{mem, slice};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt;
 use cgmath::Matrix4;
 use crate::render_pipeline::RenderPipeline;
 use crate::Renderer;
+use crate::Model;
 
 pub(crate) struct MeshInner {
     pub(crate) _vertex_buffer: wgpu::Buffer,
@@ -22,7 +23,7 @@ pub(crate) struct MeshInner {
 }
 
 // Forward declaration - defined in model.rs
-use crate::model::ModelInner;
+use crate::model::{ModelInner};
 
 #[derive(Clone)]
 pub struct WeakModel(pub(crate) Weak<ModelInner>);
@@ -30,6 +31,15 @@ pub struct WeakModel(pub(crate) Weak<ModelInner>);
 impl Drop for MeshInner {
     fn drop(&mut self) {
 
+    }
+}
+
+impl MeshInner {
+    pub fn get_parent_model(&self) -> Option<Model> {
+        unsafe {
+            let weak = self.parent_model.clone()?;
+            mem::transmute(weak.0.upgrade()?)
+        }
     }
 }
 
@@ -105,6 +115,10 @@ impl Mesh {
         lock.parent_model = Some(model);
     }
 
+    pub fn get_parent_model(&self) -> Option<Model> {
+        self.inner.lock().unwrap().get_parent_model()
+    }
+
     /// Get the model matrix from the parent model, if available
     ///
     /// Returns None if this mesh has no parent model or if the model has been dropped
@@ -113,7 +127,7 @@ impl Mesh {
 
         if let Some(weak_model) = &lock.parent_model {
             if let Some(model_inner) = weak_model.0.upgrade() {
-                return Some(*model_inner.model_matrix.lock().unwrap());
+                return Some(model_inner.model_buffer_info.lock().unwrap().model_matrix);
             }
         }
 

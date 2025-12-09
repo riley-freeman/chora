@@ -1,8 +1,10 @@
 use crate::coordination::TextureRemapping;
+use crate::model::ModelBufferStruct;
 use crate::render_target::RenderTarget;
 use crate::sampler::Sampler;
 use crate::texture::Texture;
 use bitflags::bitflags;
+use bytemuck::offset_of;
 use std::sync::Mutex;
 use std::sync::{Arc, MutexGuard, Weak};
 use wgpu::MultisampleState;
@@ -102,7 +104,6 @@ impl RenderPipeline {
             device,
             allow_world_uniform,
             allow_camera_uniform,
-            allow_object_uniform,
         );
 
         // Create the texture bind group layout.
@@ -144,6 +145,15 @@ impl RenderPipeline {
         let color_target_states = render_target.color_target_states();
         let depth_target_state = render_target.depth_stencil_state();
 
+        let mut vertex_state_buffers = Vec::with_capacity(2);
+        let per_instance_buffer_layout_attributes = create_per_instance_vertex_attributes();
+        let per_vertex_buffer_layout_attributes = create_per_vertex_attributes();
+
+        vertex_state_buffers.push(create_per_vertex_buffer_layout(&per_vertex_buffer_layout_attributes));
+        if allow_object_uniform {
+            vertex_state_buffers.push(create_per_instance_buffer_layout(&per_instance_buffer_layout_attributes));
+        }
+
         let desc = RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
@@ -151,28 +161,7 @@ impl RenderPipeline {
                 module: &shader_module,
                 compilation_options: Default::default(),
                 entry_point: Some("vs_main"),
-                buffers: &[
-                    wgpu::VertexBufferLayout {
-                        array_stride: 24,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &[
-                            // Position
-                            wgpu::VertexAttribute {
-                                offset: 0,
-                                shader_location: 0,
-                                format: wgpu::VertexFormat::Float32x3,
-                            },
-
-
-                            // Color
-                            wgpu::VertexAttribute {
-                                offset: 12,
-                                shader_location: 2,
-                                format: wgpu::VertexFormat::Float32x3,
-                            },
-                        ],
-                    }
-                ],
+                buffers: &vertex_state_buffers,
             },
             #[allow(unused)]
             fragment: Some(FragmentState {
@@ -279,7 +268,6 @@ impl RenderPipeline {
         device: &Device,
         allow_world_uniform: bool,
         allow_camera_uniform: bool,
-        allow_object_uniform: bool,
     ) -> BindGroupLayout {
         let mut uniform_bind_group_layout_entries = Vec::new();
         if allow_world_uniform {
@@ -297,18 +285,6 @@ impl RenderPipeline {
         if allow_camera_uniform {
             uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                count: None,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-            });
-        }
-        if allow_object_uniform {
-            uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
-                binding: 2,
                 count: None,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -350,6 +326,67 @@ impl RenderPipeline {
     pub fn original_shader_source(&self) -> String {
         let lock = self.inner.lock().unwrap();
         lock.original_shader_source.clone()
+    }
+}
+
+fn create_per_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
+    vec![
+        // Position
+        wgpu::VertexAttribute {
+            shader_location: 0,
+            offset: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        },
+
+
+        // Color
+        wgpu::VertexAttribute {
+            shader_location: 2,
+            offset: 12,
+            format: wgpu::VertexFormat::Float32x3,
+        },
+    ]
+}
+
+
+fn create_per_vertex_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
+    wgpu::VertexBufferLayout {
+        array_stride: 24,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: attributes,
+    }
+}
+
+fn create_per_instance_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
+    vec![
+        wgpu::VertexAttribute {
+            shader_location: 4,
+            offset: offset_of!(ModelBufferStruct, model_matrix) as _,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            shader_location: 5,
+            offset: (offset_of!(ModelBufferStruct, model_matrix) + 16) as _, 
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            shader_location: 6,
+            offset: (offset_of!(ModelBufferStruct, model_matrix) + 32) as _,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            shader_location: 7,
+            offset: (offset_of!(ModelBufferStruct, model_matrix) + 48) as _,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+    ]
+}
+
+fn create_per_instance_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<ModelBufferStruct>() as _,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: attributes,
     }
 }
 
