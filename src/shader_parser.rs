@@ -13,7 +13,16 @@ pub struct GlobalDeclaration {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<String>,
     pub full_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Parameter {
+    pub name        : String, 
+    pub data_type   : String,
+    pub location    : Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +103,7 @@ impl ParsedShader {
     fn extract_functions(source: &str) -> Vec<Function> {
         let mut functions = Vec::new();
         let fn_regex = Regex::new(r"\bfn\s+(\w+)\s*\(").unwrap();
+        let para_regex = Regex::new(r"(?:(?:(@\w+\(\S+\))\s?)?(\w+): *([^\s,)]+),?)").unwrap();
 
         for cap in fn_regex.captures_iter(source) {
             let name = cap[1].to_string();
@@ -103,11 +113,34 @@ impl ParsedShader {
             if let Some(open_brace_pos) = source[start_pos..].find('{') {
                 let body_start = start_pos + open_brace_pos;
 
+                // Create a slice for the parameters
+                let parameter_slice = &source[start_pos..body_start];
+                let mut parameters = vec![];
+                for cap in para_regex.captures_iter(parameter_slice) {
+                    parameters.push(Parameter {
+                        location: cap.get(1).map(|l| l.as_str().to_string()),
+                        name: cap[2].to_string(),
+                        data_type: cap[3].to_string(),
+                    })
+                }
+
+                // Create a slice to find the return type 
+                let return_type = if let Some(return_token_pos) = source[start_pos..].find('>') {
+                    let return_start = return_token_pos + start_pos + 1;
+                    let unfiltered = String::from(&source[return_start..body_start]);
+                    Some(unfiltered.chars().filter(|c| c.ne(&' ')).collect())
+                } else {
+                    None
+                };
+
+
                 // Match braces to find the closing brace
                 if let Some(body_end) = Self::find_matching_brace(source, body_start) {
                     let full_text = &source[start_pos..=body_end];
                     functions.push(Function {
                         name,
+                        parameters,
+                        return_type,
                         full_text: full_text.to_string(),
                     });
                 }
@@ -145,6 +178,52 @@ impl ParsedShader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_function_() {
+        let shader = r#"
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32, vertex: VertexInput, instance: InstanceInput) -> @builtin(position) vec4<f32> {}
+
+fn dummy(idx: u32, vert: VertexInput, inst: InstanceInput) {}
+"#;
+
+        let parsed = ParsedShader::parse(shader);
+        assert_eq!(parsed.functions.len(), 2);
+        assert!(parsed.vertex_entry.is_some());
+
+        assert_eq!(parsed.functions[0].name, "vs_main");
+        assert_eq!(parsed.functions[0].parameters.len(), 3);
+        assert_eq!(parsed.functions[0].return_type, Some("@builtin(position)vec4<f32>".to_string()));
+
+        assert_eq!(parsed.functions[0].parameters[0].location, Some("@builtin(vertex_index)".to_string()));
+        assert_eq!(parsed.functions[0].parameters[1].location, None);
+        assert_eq!(parsed.functions[0].parameters[2].location, None);
+
+        assert_eq!(parsed.functions[0].parameters[0].name, "idx");
+        assert_eq!(parsed.functions[0].parameters[1].name, "vertex");
+        assert_eq!(parsed.functions[0].parameters[2].name, "instance");
+
+        assert_eq!(parsed.functions[0].parameters[0].data_type, "u32");
+        assert_eq!(parsed.functions[0].parameters[1].data_type, "VertexInput");
+        assert_eq!(parsed.functions[0].parameters[2].data_type, "InstanceInput");
+
+        assert_eq!(parsed.functions[1].name, "dummy");
+        assert_eq!(parsed.functions[1].parameters.len(), 3);
+        assert_eq!(parsed.functions[1].return_type, None);
+
+        assert_eq!(parsed.functions[1].parameters[0].location, None);
+        assert_eq!(parsed.functions[1].parameters[1].location, None);
+        assert_eq!(parsed.functions[1].parameters[2].location, None);
+
+        assert_eq!(parsed.functions[1].parameters[0].name, "idx");
+        assert_eq!(parsed.functions[1].parameters[1].name, "vert");
+        assert_eq!(parsed.functions[1].parameters[2].name, "inst");
+
+        assert_eq!(parsed.functions[1].parameters[0].data_type, "u32");
+        assert_eq!(parsed.functions[1].parameters[1].data_type, "VertexInput");
+        assert_eq!(parsed.functions[1].parameters[2].data_type, "InstanceInput");
+    }
 
     #[test]
     fn test_parse_simple_shader() {
