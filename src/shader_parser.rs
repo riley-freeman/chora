@@ -15,12 +15,14 @@ pub struct Function {
     pub name: String,
     pub parameters: HashMap<String, Parameter>,
     pub return_type: Option<String>,
+    pub body: String,
     pub full_text: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub name        : String, 
+    pub position    : usize,
     pub data_type   : String,
     pub location    : Option<String>,
 }
@@ -116,13 +118,14 @@ impl ParsedShader {
                 // Create a slice for the parameters
                 let parameter_slice = &source[start_pos..body_start];
                 let mut parameters = HashMap::new();
-                for cap in para_regex.captures_iter(parameter_slice) {
+                for (i, cap) in para_regex.captures_iter(parameter_slice).enumerate() {
                     let name = cap[2].to_string();
                     parameters.insert(
                         name.clone(),
                         Parameter {
                             location: cap.get(1).map(|l| l.as_str().to_string()),
                             name: name,
+                            position: i,
                             data_type: cap[3].to_string(),
                         }
                     );
@@ -141,10 +144,12 @@ impl ParsedShader {
                 // Match braces to find the closing brace
                 if let Some(body_end) = Self::find_matching_brace(source, body_start) {
                     let full_text = &source[start_pos..=body_end];
+                    let body = &source[body_start+1..body_end];
                     functions.push(Function {
                         name,
                         parameters,
                         return_type,
+                        body: body.to_string(),
                         full_text: full_text.to_string(),
                     });
                 }

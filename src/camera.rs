@@ -1,3 +1,4 @@
+use std::ptr::slice_from_raw_parts;
 use std::sync::{Arc, Mutex};
 use std::default::Default;
 use std::mem::{self, offset_of, size_of};
@@ -116,7 +117,12 @@ impl Camera {
                 let offset = offset_of!(CameraBufferStruct, view_proj_matrix) as u64;
                 let size = size_of::<Matrix4<f32>>() as u64;
                 let mut view = buffer.get_mapped_range_mut(offset..size);
-                view.copy_from_slice(unsafe {mem::transmute_copy(&view_proj_matrix)});
+
+                unsafe {
+                    let src_ptr = &view_proj_matrix as *const _ as *const u8;
+                    let src = &*slice_from_raw_parts(src_ptr, size as usize);
+                    view.copy_from_slice(src);
+                };
             }
             buffer.unmap();
 

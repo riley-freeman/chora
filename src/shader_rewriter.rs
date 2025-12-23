@@ -1,6 +1,12 @@
-use crate::shader_parser::ParsedShader;
+use crate::{render_pipeline::RenderPipelineFlags, shader_parser::{Function, Parameter, ParsedShader}};
 use std::collections::HashMap;
 use regex::Regex;
+
+
+const CAMERA_UNIFORM_WGSL: &str = include_str!("shaders/camera_uniform.wgsl");
+const WORLD_UNIFORM_WGSL: &str = include_str!("shaders/world_uniform.wgsl");
+const VERTEX_INPUT_WGSL: &str = include_str!("shaders/vertex_input.wgsl");
+const INSTANCE_INPUT_WGSL: &str = include_str!("shaders/instance_input.wgsl");
 
 pub struct ShaderRewriter;
 
@@ -14,10 +20,56 @@ impl ShaderRewriter {
     /// Example: {0 -> 0, 1 -> 0, 2 -> 1} (textures 0,1 use atlas_0, texture 2 uses atlas_1)
     pub fn rewrite_shader(
         shader: &ParsedShader,
+        flags: RenderPipelineFlags,
         texture_index_map: &HashMap<String, u32>,
         atlas_binding_map: &HashMap<u32, u32>,
     ) -> String {
+        let mut shader = shader.clone();
+        
         let mut rewritten = String::new();
+        if flags.contains(RenderPipelineFlags::ALLOW_WORLD_UNIFORM) {
+            rewritten.push_str(WORLD_UNIFORM_WGSL);
+            rewritten.push('\n');
+        }
+
+        if flags.contains(RenderPipelineFlags::ALLOW_CAMERA_UNIFORM) {
+            rewritten.push_str(CAMERA_UNIFORM_WGSL);
+            rewritten.push('\n');
+        }
+
+
+        // Update whether or not to allow the instance parameter
+        if let Some(vertex_func) = &mut shader.vertex_entry {
+            let vertex_text = String::from("vertex");
+            let instance_text = String::from("instance");
+
+            if !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT) {
+                rewritten.push_str(VERTEX_INPUT_WGSL);
+                rewritten.push('\n');
+
+                vertex_func.parameters.insert(vertex_text.clone(), Parameter {
+                    location: None,
+                    position: usize::MAX - 1,
+                    data_type: String::from("VertexInfo"),
+                    name: vertex_text.clone(),
+                });
+            }
+
+            let _ = vertex_func.parameters.remove(&instance_text);
+            if flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM) {
+                rewritten.push_str(INSTANCE_INPUT_WGSL);
+                rewritten.push('\n');
+
+                vertex_func.parameters.insert(instance_text.clone(), Parameter {
+                    location: None,
+                    position: usize::MAX,
+                    data_type: String::from("InstanceInfo"),
+                    name: instance_text.clone(),
+                });
+            }
+        }
+        
+
 
         // 1. Remove texture bindings (they'll be replaced with atlas bindings)
         // 2. Keep sampler bindings
@@ -37,7 +89,7 @@ impl ShaderRewriter {
         // 4. Add helper functions (but skip vs_main and fs_main)
         for func in shader.helper_functions() {
             rewritten.push_str(&Self::rewrite_function_body(
-                &func.full_text,
+                &func,
                 texture_index_map,
                 atlas_binding_map,
             ));
@@ -47,7 +99,7 @@ impl ShaderRewriter {
         // 5. Rewrite entry points (vs_main, fs_main)
         if let Some(vs) = &shader.vertex_entry {
             rewritten.push_str(&Self::rewrite_function_body(
-                &vs.full_text,
+                &vs,
                 texture_index_map,
                 atlas_binding_map,
             ));
@@ -56,7 +108,7 @@ impl ShaderRewriter {
 
         if let Some(fs) = &shader.fragment_entry {
             rewritten.push_str(&Self::rewrite_function_body(
-                &fs.full_text,
+                &fs,
                 texture_index_map,
                 atlas_binding_map,
             ));
@@ -66,13 +118,41 @@ impl ShaderRewriter {
         rewritten
     }
 
+    fn rewrite_function_parameters(parameters: &Vec<Parameter>) -> String {
+        let mut output = String::new();
+        for (i, p) in parameters.iter().enumerate() {
+            if i != 0 { output.push_str(", "); }
+            if let Some(loc) = &p.location {
+                output.push_str(loc);
+            }
+
+            let rendered = format!("{}: {}", p.name, p.data_type);
+            output.push_str(&rendered);
+        }
+        output
+    }
+
     /// Rewrite function body to replace textureSample(tex_var, ...) with textureSample#(atlas_N, ...)
     fn rewrite_function_body(
-        function_text: &str,
+        function: &Function,
         texture_index_map: &HashMap<String, u32>,
         atlas_binding_map: &HashMap<u32, u32>,
     ) -> String {
-        let mut result = function_text.to_string();
+        let name = &function.name;
+        let body = &function.body;
+        let return_type = match function.return_type.clone() {
+            Some(dt) => dt,
+            None => String::from("()")
+        };
+
+        // Get the parameters and make sure they are in the correct order
+        let mut parameters: Vec<Parameter> = function.parameters.values().cloned().collect();
+        parameters.sort_by_key(|p| p.position);
+        
+        // render out the parameters
+        let parameters = Self::rewrite_function_parameters(&parameters);
+
+        let mut result = format!("fn {} ({}) -> {} {{{}}}", name, parameters, return_type, body);
 
         // Replace textureSample(texture_name, sampler, uv) with textureSample#(atlas_N, sampler, uv)
         for (tex_name, &tex_index) in texture_index_map {
@@ -133,12 +213,15 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
         let rewritten = ShaderRewriter::rewrite_shader(
             &parsed,
+            RenderPipelineFlags::all(),
             &texture_index_map,
             &atlas_binding_map,
         );
 
         // Should replace textureSample(my_texture with textureSample0(atlas_0
         assert!(rewritten.contains("textureSample0(atlas_0"));
+        assert!(rewritten.contains("WorldUniform"));
+        assert!(rewritten.contains("CameraUniform"));
         assert!(!rewritten.contains("textureSample(my_texture"));
 
         // Should keep sampler binding

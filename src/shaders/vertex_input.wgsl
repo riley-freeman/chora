@@ -16,3 +16,4 @@ struct VertexInput {
     tangent: vec3<f32>,
     bi_tangent: vec3<f32>,
 }
+

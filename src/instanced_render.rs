@@ -149,9 +149,10 @@ impl InstancedRender {
         let atlas_binding_map = self.build_atlas_binding_map(&sprites, &atlas_map);
 
         // 8. Rewrite each shader to use textureSample#
+        let first_rp = self.render_pipelines.first().unwrap();
         let rewritten_shaders: Vec<String> = parsed_shaders
             .iter()
-            .map(|s| ShaderRewriter::rewrite_shader(s, &texture_index_map, &atlas_binding_map))
+            .map(|s| ShaderRewriter::rewrite_shader(s, first_rp.flags, &texture_index_map, &atlas_binding_map))
             .collect();
 
         // 9. Merge into mega-shader

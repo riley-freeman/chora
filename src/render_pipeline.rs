@@ -21,6 +21,8 @@ bitflags! {
         const ALLOW_WORLD_UNIFORM = 1;
         const ALLOW_CAMERA_UNIFORM = 2;
         const ALLOW_OBJECT_UNIFORM = 7; // We want to force world and camera uniforms if we're rendering objects
+
+        const OVERRIDE_VERTEX_INPUT = 8;
     }
 }
 
@@ -29,6 +31,8 @@ pub(crate) struct RenderPipelineInner {
     pub(crate) sampler: Option<Sampler>,
     pub(crate) original_shader_source: String,
     pub(crate) shader_code: String,
+
+    pub(crate) flags: RenderPipelineFlags,
 
     _uniform_bind_group_layout: wgpu::BindGroupLayout,
     _texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -42,10 +46,14 @@ pub(crate) struct RenderPipelineInner {
 #[derive(Clone)]
 pub struct RenderPipeline {
     pub(crate) inner: Arc<Mutex<RenderPipelineInner>>,
+    pub(crate) flags: RenderPipelineFlags,
 }
 
 #[derive(Debug, Clone)]
-pub struct WeakRenderPipeline(Weak<Mutex<RenderPipelineInner>>);
+pub struct WeakRenderPipeline {
+    inner: Weak<Mutex<RenderPipelineInner>>,
+    flags: RenderPipelineFlags,
+}
 
 impl RenderPipeline {
     pub fn new(
@@ -129,7 +137,7 @@ impl RenderPipeline {
 
         let mut bind_group_layouts = Vec::new();
         let mut texture_bind_group_index = 0;
-        if !flags.is_empty() {
+        if !(flags & !RenderPipelineFlags::OVERRIDE_VERTEX_INPUT).is_empty() {
             bind_group_layouts.push(&uniform_bind_group_layout);
             texture_bind_group_index = 1;
         }
@@ -189,10 +197,12 @@ impl RenderPipeline {
             _pipeline_layout: pipeline_layout,
             _render_pipeline: render_pipeline,
             texture_bind_group_index,
+            flags,
         };
 
         Self {
             inner: Arc::new(Mutex::new(inner)),
+            flags
         }
     }
 
@@ -301,7 +311,7 @@ impl RenderPipeline {
     }
 
     pub fn downgrade(&self) -> WeakRenderPipeline {
-        WeakRenderPipeline(Arc::downgrade(&self.inner))
+        WeakRenderPipeline{ inner: Arc::downgrade(&self.inner), flags: self.flags.clone() }
     }
 
     pub(crate) fn lock(&'_ self) -> MutexGuard<'_, RenderPipelineInner> {
@@ -392,6 +402,9 @@ fn create_per_instance_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wg
 
 impl WeakRenderPipeline {
     pub fn upgrade(&self) -> Option<RenderPipeline> {
-        self.0.upgrade().map(|inner| RenderPipeline { inner })
+        self.inner
+            .upgrade()
+            .map(|inner| 
+                RenderPipeline { inner, flags: self.flags.clone() })
     }
 }

@@ -61,7 +61,7 @@ fn main() {
         shader_source,
         &textures,
         Some(sampler),
-        RenderPipelineFlags::empty(),
+        RenderPipelineFlags::OVERRIDE_VERTEX_INPUT,
     );
 
     // Create triangle mesh
