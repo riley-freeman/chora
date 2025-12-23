@@ -13,7 +13,7 @@ pub struct GlobalDeclaration {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    pub parameters: Vec<Parameter>,
+    pub parameters: HashMap<String, Parameter>,
     pub return_type: Option<String>,
     pub full_text: String,
 }
@@ -115,13 +115,17 @@ impl ParsedShader {
 
                 // Create a slice for the parameters
                 let parameter_slice = &source[start_pos..body_start];
-                let mut parameters = vec![];
+                let mut parameters = HashMap::new();
                 for cap in para_regex.captures_iter(parameter_slice) {
-                    parameters.push(Parameter {
-                        location: cap.get(1).map(|l| l.as_str().to_string()),
-                        name: cap[2].to_string(),
-                        data_type: cap[3].to_string(),
-                    })
+                    let name = cap[2].to_string();
+                    parameters.insert(
+                        name.clone(),
+                        Parameter {
+                            location: cap.get(1).map(|l| l.as_str().to_string()),
+                            name: name,
+                            data_type: cap[3].to_string(),
+                        }
+                    );
                 }
 
                 // Create a slice to find the return type 
@@ -192,37 +196,33 @@ fn dummy(idx: u32, vert: VertexInput, inst: InstanceInput) {}
         assert_eq!(parsed.functions.len(), 2);
         assert!(parsed.vertex_entry.is_some());
 
-        assert_eq!(parsed.functions[0].name, "vs_main");
-        assert_eq!(parsed.functions[0].parameters.len(), 3);
-        assert_eq!(parsed.functions[0].return_type, Some("@builtin(position)vec4<f32>".to_string()));
+        {
+            assert_eq!(parsed.functions[0].name, "vs_main");
+            assert_eq!(parsed.functions[0].parameters.len(), 3);
+            assert_eq!(parsed.functions[0].return_type, Some("@builtin(position)vec4<f32>".to_string()));
 
-        assert_eq!(parsed.functions[0].parameters[0].location, Some("@builtin(vertex_index)".to_string()));
-        assert_eq!(parsed.functions[0].parameters[1].location, None);
-        assert_eq!(parsed.functions[0].parameters[2].location, None);
+            assert_eq!(parsed.functions[0].parameters.get("idx").unwrap().location, Some("@builtin(vertex_index)".to_string()));
+            assert_eq!(parsed.functions[0].parameters.get("vertex").unwrap().location, None);
+            assert_eq!(parsed.functions[0].parameters.get("instance").unwrap().location, None);
 
-        assert_eq!(parsed.functions[0].parameters[0].name, "idx");
-        assert_eq!(parsed.functions[0].parameters[1].name, "vertex");
-        assert_eq!(parsed.functions[0].parameters[2].name, "instance");
+            assert_eq!(parsed.functions[0].parameters.get("idx").unwrap().data_type, "u32");
+            assert_eq!(parsed.functions[0].parameters.get("vertex").unwrap().data_type, "VertexInput");
+            assert_eq!(parsed.functions[0].parameters.get("instance").unwrap().data_type, "InstanceInput");
+        }
 
-        assert_eq!(parsed.functions[0].parameters[0].data_type, "u32");
-        assert_eq!(parsed.functions[0].parameters[1].data_type, "VertexInput");
-        assert_eq!(parsed.functions[0].parameters[2].data_type, "InstanceInput");
+        {
+            assert_eq!(parsed.functions[1].name, "dummy");
+            assert_eq!(parsed.functions[1].parameters.len(), 3);
+            assert_eq!(parsed.functions[1].return_type, None);
 
-        assert_eq!(parsed.functions[1].name, "dummy");
-        assert_eq!(parsed.functions[1].parameters.len(), 3);
-        assert_eq!(parsed.functions[1].return_type, None);
+            assert_eq!(parsed.functions[1].parameters.get("idx").unwrap().location, None);
+            assert_eq!(parsed.functions[1].parameters.get("vert").unwrap().location, None);
+            assert_eq!(parsed.functions[1].parameters.get("inst").unwrap().location, None);
 
-        assert_eq!(parsed.functions[1].parameters[0].location, None);
-        assert_eq!(parsed.functions[1].parameters[1].location, None);
-        assert_eq!(parsed.functions[1].parameters[2].location, None);
-
-        assert_eq!(parsed.functions[1].parameters[0].name, "idx");
-        assert_eq!(parsed.functions[1].parameters[1].name, "vert");
-        assert_eq!(parsed.functions[1].parameters[2].name, "inst");
-
-        assert_eq!(parsed.functions[1].parameters[0].data_type, "u32");
-        assert_eq!(parsed.functions[1].parameters[1].data_type, "VertexInput");
-        assert_eq!(parsed.functions[1].parameters[2].data_type, "InstanceInput");
+            assert_eq!(parsed.functions[1].parameters.get("idx").unwrap().data_type, "u32");
+            assert_eq!(parsed.functions[1].parameters.get("vert").unwrap().data_type, "VertexInput");
+            assert_eq!(parsed.functions[1].parameters.get("inst").unwrap().data_type, "InstanceInput");
+        }
     }
 
     #[test]
