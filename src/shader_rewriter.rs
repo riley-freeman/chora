@@ -91,13 +91,6 @@ impl ShaderRewriter {
                     rewritten.push_str("\n\n");
                 }
                 crate::shader_parser::Declaration::Global(g) => {
-                    // Remove texture bindings (they'll be replaced with atlas bindings)
-                    // Keep sampler bindings and other declarations
-                    if shader.texture_references.contains_key(&g.var_name) {
-                        // Skip texture bindings - they'll be replaced with atlas bindings
-                        continue;
-                    }
-                    // Keep samplers and other bindings
                     rewritten.push_str(&g.full_text);
                     rewritten.push_str("\n\n");
                 }
@@ -188,16 +181,16 @@ impl ShaderRewriter {
         let mut result = format!("{}fn {} ({}) -> {} {{{}}}", attributes_prefix, name, parameters, return_type, body);
 
         // Replace textureSample(texture_name, sampler, uv) with textureSample#(atlas_N, sampler, uv)
-        for (tex_name, &tex_index) in texture_index_map {
-            let atlas_binding = atlas_binding_map.get(&tex_index).unwrap_or(&0);
+        // for (tex_name, &tex_index) in texture_index_map {
+        //     let atlas_binding = atlas_binding_map.get(&tex_index).unwrap_or(&0);
 
-            // Match textureSample(texture_name, ...)
-            let pattern = format!(r"\btextureSample\s*\(\s*{}\s*,", tex_name);
-            let regex = Regex::new(&pattern).unwrap();
+        //     // Match textureSample(texture_name, ...)
+        //     let pattern = format!(r"\btextureSample\s*\(\s*{}\s*,", tex_name);
+        //     let regex = Regex::new(&pattern).unwrap();
 
-            let replacement = format!("textureSample{}(atlas_{},", tex_index, atlas_binding);
-            result = regex.replace_all(&result, replacement.as_str()).to_string();
-        }
+        //     let replacement = format!("textureSample{}(atlas_{},", tex_index, atlas_binding);
+        //     result = regex.replace_all(&result, replacement.as_str()).to_string();
+        // }
 
         result
     }

@@ -96,35 +96,37 @@ impl RenderPipeline {
             &atlas_binding_map,
         );
 
+        println!("SHADER: \n{}", shader);
+
         // Generate textureSample functions for each remapped texture
-        let mut generated_functions = String::new();
-        for remapping in &remappings {
-            let function_name = format!("textureSample{}", remapping.binding);
-            let min_x = remapping.coords.min().x;
-            let min_y = remapping.coords.min().y;
-            let max_x = remapping.coords.max().x;
-            let max_y = remapping.coords.max().y;
+        // let mut generated_functions = String::new();
+        // for remapping in &remappings {
+        //     let function_name = format!("textureSample{}", remapping.binding);
+        //     let min_x = remapping.coords.min().x;
+        //     let min_y = remapping.coords.min().y;
+        //     let max_x = remapping.coords.max().x;
+        //     let max_y = remapping.coords.max().y;
 
-            let function = format!(
-                "fn {}(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>) -> vec4<f32> {{\n\
-                 \tlet min_uv = vec2<f32>({}, {});\n\
-                 \tlet max_uv = vec2<f32>({}, {});\n\
-                 \tlet remapped_uv = min_uv + uv * (max_uv - min_uv);\n\
-                 \treturn textureSample(tex, samp, remapped_uv);\n\
-                 }}\n\n",
-                function_name, min_x, min_y, max_x, max_y
-            );
-            generated_functions.push_str(&function);
+        //     let function = format!(
+        //         "fn {}(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>) -> vec4<f32> {{\n\
+        //          \tlet min_uv = vec2<f32>({}, {});\n\
+        //          \tlet max_uv = vec2<f32>({}, {});\n\
+        //          \tlet remapped_uv = min_uv + uv * (max_uv - min_uv);\n\
+        //          \treturn textureSample(tex, samp, remapped_uv);\n\
+        //          }}\n\n",
+        //         function_name, min_x, min_y, max_x, max_y
+        //     );
+        //     generated_functions.push_str(&function);
 
-            // Replace the binding number in the shader source
-            // Match patterns like "@binding(44)" and replace with "@binding(0)"
-            let old_binding = format!("@binding({})", remapping.binding);
-            let new_binding = format!("@binding({})", remapping.new_binding);
-            shader = shader.replace(&old_binding, &new_binding);
-        }
+        //     // Replace the binding number in the shader source
+        //     // Match patterns like "@binding(44)" and replace with "@binding(0)"
+        //     let old_binding = format!("@binding({})", remapping.binding);
+        //     let new_binding = format!("@binding({})", remapping.new_binding);
+        //     shader = shader.replace(&old_binding, &new_binding);
+        // }
 
-        // Prepend generated functions to the shader source
-        let shader = format!("{}{}", generated_functions, shader);
+        // // Prepend generated functions to the shader source
+        // let shader = format!("{}{}", generated_functions, shader);
 
         // Get the flag info (about the uniform buffers)
         let allow_object_uniform = flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM);
@@ -329,20 +331,27 @@ fn create_per_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
             format: wgpu::VertexFormat::Float32x3,
         },
 
-
-        // Color
+        // Texture Coordinates
         wgpu::VertexAttribute {
-            shader_location: 2,
+            shader_location: 1,
             offset: 12,
-            format: wgpu::VertexFormat::Float32x3,
+            format: wgpu::VertexFormat::Float32x2,
         },
+
+        // // Color
+        // wgpu::VertexAttribute {
+        //     shader_location: 2,
+        //     offset: 12,
+        //     format: wgpu::VertexFormat::Float32x3,
+        // },
     ]
 }
 
 
 fn create_per_vertex_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
     wgpu::VertexBufferLayout {
-        array_stride: 24,
+        array_stride: 20,
+        // array_stride: 24,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: attributes,
     }

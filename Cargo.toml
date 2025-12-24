@@ -18,6 +18,7 @@ naga = { version="27.0.3", features = ["wgsl-in", "wgsl-out"] }
 regex = "1.11.1"
 raw-window-handle = "0.6.0"
 bytemuck = { version = "1.14.0", features = ["derive"] }
+gltf = "1.4"
 
 [dev-dependencies]
 winit = "0.29.10"
