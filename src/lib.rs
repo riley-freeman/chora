@@ -303,20 +303,11 @@ impl Renderer {
         scale: &Vector3<f32>,
     ) -> Result<Model, error::ChoraError> {
         let device = self.device();
-        let camera = self.main_camera();
-
-        // TODO: replace with the appropiate buffer when we get to multibuffering.
-        let camera_buffer = camera.uniform_buffer(0).unwrap();
-
-        // TODO: get to world buffers
 
         Ok(Model::new(
             &device,
             meshes,
             mutable,
-            todo!(),
-            None /* TODO */,
-            Some(camera_buffer),
             position as *const _ as _,
             rotation as *const _ as _,
             scale as *const _ as _,
@@ -724,7 +715,7 @@ impl Renderer {
             // Iterate over mesh collections
             for (mesh_address, mesh_list) in &this.mesh_collection {
                 // Check if it's an instanced render or independent
-                if let Some(instanced_render) = this.mesh_instanced_renders.get(mesh_address) {
+                if let Some(_instanced_render) = this.mesh_instanced_renders.get(mesh_address) {
                     // TODO: Implement instanced rendering
                     // For now, we can just iterate and draw individually if needed,
                     // but ideally InstancedRender should handle this.

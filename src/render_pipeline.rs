@@ -6,7 +6,7 @@ use crate::texture::Texture;
 use bitflags::bitflags;
 use bytemuck::offset_of;
 use std::sync::Mutex;
-use std::sync::{Arc, MutexGuard, Weak};
+use std::sync::{Arc, Weak};
 use wgpu::MultisampleState;
 use wgpu::PipelineLayoutDescriptor;
 use wgpu::PrimitiveState;
@@ -32,7 +32,7 @@ pub(crate) struct RenderPipelineInner {
     pub(crate) original_shader_source: String,
     pub(crate) shader_code: String,
 
-    pub(crate) flags: RenderPipelineFlags,
+    pub(crate) _flags: RenderPipelineFlags,
 
     _uniform_bind_group_layout: wgpu::BindGroupLayout,
     _texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -197,7 +197,7 @@ impl RenderPipeline {
             _pipeline_layout: pipeline_layout,
             _render_pipeline: render_pipeline,
             texture_bind_group_index,
-            flags,
+            _flags: flags,
         };
 
         Self {
@@ -312,10 +312,6 @@ impl RenderPipeline {
 
     pub fn downgrade(&self) -> WeakRenderPipeline {
         WeakRenderPipeline{ inner: Arc::downgrade(&self.inner), flags: self.flags.clone() }
-    }
-
-    pub(crate) fn lock(&'_ self) -> MutexGuard<'_, RenderPipelineInner> {
-        self.inner.lock().unwrap()
     }
 
     pub fn textures(&self) -> Vec<Texture> {

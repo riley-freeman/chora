@@ -1,13 +1,11 @@
 use std::ptr::slice_from_raw_parts;
 use std::sync::{Arc, Mutex};
 use std::default::Default;
-use std::mem::{self, offset_of, size_of};
+use std::mem::{offset_of, size_of};
 
-use bytemuck::{NoUninit, Pod, Zeroable};
 use cgmath::{Matrix4, Vector3, Rad, Quaternion, Rotation3, PerspectiveFov, Ortho};
-use naga::proc::index;
 use wgpu::wgt::BufferDescriptor;
-use wgpu::{BufferUsages, BufferViewMut, ColorTargetState, ColorWrites};
+use wgpu::{BufferUsages, ColorTargetState, ColorWrites};
 use wgpu::TextureViewDescriptor;
 use wgpu::Buffer;
 use wgpu::CompareFunction::Less;
@@ -265,17 +263,12 @@ impl Camera {
         lock.output_image_views[0].clone()
     }
 
-    pub(crate) fn current_output_texture_raw(&self) -> Texture {
-        let lock = self.0.lock().unwrap();
-        lock.output_images[0].clone()
-    }
-
     pub(crate) fn depth_texture_view(&self) -> TextureView {
         let lock = self.0.lock().unwrap();
         lock.depth_image_view.clone()
     }
 
-    pub(crate) fn uniform_buffer(&self, index: usize) -> Option<wgpu::Buffer> {
+    pub(crate) fn _uniform_buffer(&self, index: usize) -> Option<wgpu::Buffer> {
         let lock = self.0.lock().unwrap();
         lock.camera_buffers.get(index).map(|r| r.clone())
     }

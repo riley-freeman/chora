@@ -1,5 +1,5 @@
 use cgmath::{Matrix4, Vector3, Rad, Quaternion, Rotation3};
-use wgpu::{BindGroup, BindGroupEntry, BindGroupLayout, BindingResource, Buffer, BufferBinding, BufferUsages, Queue};
+use wgpu::{Buffer, BufferUsages, Queue};
 use wgpu::Device;
 use wgpu::wgt::BufferDescriptor;
 use crate::mesh::{Mesh, WeakModel};
@@ -40,7 +40,7 @@ impl Default for ModelBufferStruct {
 }
 
 impl Model {
-    pub fn new(device: &Device, meshes: Vec<Mesh>, mutable: bool, bind_group_layout: BindGroupLayout, world_buffer: Option<Buffer>, camera_buffer: Option<Buffer>,
+    pub fn new(device: &Device, meshes: Vec<Mesh>, mutable: bool,
                position: *const f32, rotation: *const f32, scale: *const f32) -> Self
     {
         // Create a buffer for the model's render data
@@ -166,17 +166,6 @@ impl Model {
     /// Create a weak reference to this model
     pub(crate) fn downgrade(&self) -> WeakModel {
         WeakModel(Arc::downgrade(&self.inner))
-    }
-}
-
-fn create_buffer_group_entry<'a>(buffer: &Buffer, binding: u32) -> BindGroupEntry<'_> {
-    BindGroupEntry {
-        binding: binding,
-        resource: BindingResource::Buffer(BufferBinding {
-            buffer: buffer,
-            offset: 0,
-            size: None
-        })
     }
 }
 
