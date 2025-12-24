@@ -8,6 +8,9 @@ const WORLD_UNIFORM_WGSL: &str = include_str!("shaders/world_uniform.wgsl");
 const VERTEX_INPUT_WGSL: &str = include_str!("shaders/vertex_input.wgsl");
 const INSTANCE_INPUT_WGSL: &str = include_str!("shaders/instance_input.wgsl");
 
+const VERTEX_FUNCTION_VERTEX_INFO_WGSL: &str = include_str!("shaders/vertex_function_vertex_info.wgsl");
+const VERTEX_FUNCTION_INSTANCE_INFO_WGSL: &str = include_str!("shaders/vertex_function_instance_info.wgsl");
+
 pub struct ShaderRewriter;
 
 impl ShaderRewriter {
@@ -40,31 +43,35 @@ impl ShaderRewriter {
 
         // Update whether or not to allow the instance parameter
         if let Some(vertex_func) = &mut shader.vertex_entry {
-            let vertex_text = String::from("vertex");
-            let instance_text = String::from("instance");
-
             if !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT) {
                 rewritten.push_str(VERTEX_INPUT_WGSL);
                 rewritten.push('\n');
 
-                vertex_func.parameters.insert(vertex_text.clone(), Parameter {
+                // Remove any user-added vertex parameter (remove both "vertex" and "raw_vertex" to be safe)
+                let _ = vertex_func.parameters.remove("vertex");
+                let _ = vertex_func.parameters.remove("raw_vertex");
+                
+                vertex_func.parameters.insert("raw_vertex".to_string(), Parameter {
                     location: None,
                     position: usize::MAX - 1,
-                    data_type: String::from("VertexInfo"),
-                    name: vertex_text.clone(),
+                    data_type: String::from("RawVertexInfo"),
+                    name: "vertex".to_string(),
                 });
             }
 
-            let _ = vertex_func.parameters.remove(&instance_text);
             if flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM) {
+                // Remove raw_instance and instance to be safe when we're adding our own instance parameter
+                let _ = vertex_func.parameters.remove("raw_instance");
+                let _ = vertex_func.parameters.remove("instance");
+                
                 rewritten.push_str(INSTANCE_INPUT_WGSL);
                 rewritten.push('\n');
 
-                vertex_func.parameters.insert(instance_text.clone(), Parameter {
+                vertex_func.parameters.insert("raw_instance".to_string(), Parameter {
                     location: None,
                     position: usize::MAX,
-                    data_type: String::from("InstanceInfo"),
-                    name: instance_text.clone(),
+                    data_type: String::from("RawInstanceInput"),
+                    name: "raw_instance".to_string(),
                 });
             }
         }
@@ -90,6 +97,7 @@ impl ShaderRewriter {
         for func in shader.helper_functions() {
             rewritten.push_str(&Self::rewrite_function_body(
                 &func,
+                flags,
                 texture_index_map,
                 atlas_binding_map,
             ));
@@ -100,6 +108,7 @@ impl ShaderRewriter {
         if let Some(vs) = &shader.vertex_entry {
             rewritten.push_str(&Self::rewrite_function_body(
                 &vs,
+                flags,
                 texture_index_map,
                 atlas_binding_map,
             ));
@@ -109,6 +118,7 @@ impl ShaderRewriter {
         if let Some(fs) = &shader.fragment_entry {
             rewritten.push_str(&Self::rewrite_function_body(
                 &fs,
+                flags,
                 texture_index_map,
                 atlas_binding_map,
             ));
@@ -135,15 +145,39 @@ impl ShaderRewriter {
     /// Rewrite function body to replace textureSample(tex_var, ...) with textureSample#(atlas_N, ...)
     fn rewrite_function_body(
         function: &Function,
+        flags: RenderPipelineFlags,
         texture_index_map: &HashMap<String, u32>,
         atlas_binding_map: &HashMap<u32, u32>,
     ) -> String {
         let name = &function.name;
-        let body = &function.body;
+        let mut body = function.body.clone();
         let return_type = match function.return_type.clone() {
             Some(dt) => dt,
             None => String::from("()")
         };
+
+        // Append vertex info code to vertex function body
+        if name == "vs_main" {
+            // Append vertex info code only if OVERRIDE_VERTEX_INPUT is not set
+            if !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT) {
+                if let Some(param) = function.parameters.get("raw_vertex") {
+                    if param.data_type == "RawVertexInfo" {
+                        body.push_str("\n    ");
+                        body.push_str(VERTEX_FUNCTION_VERTEX_INFO_WGSL.trim());
+                    }
+                }
+            }
+            
+            // Append instance info code only if ALLOW_OBJECT_UNIFORM is set
+            if flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM) {
+                if let Some(param) = function.parameters.get("raw_instance") {
+                    if param.data_type == "RawInstanceInput" {
+                        body.push_str("\n    ");
+                        body.push_str(VERTEX_FUNCTION_INSTANCE_INFO_WGSL.trim());
+                    }
+                }
+            }
+        }
 
         // Get the parameters and make sure they are in the correct order
         let mut parameters: Vec<Parameter> = function.parameters.values().cloned().collect();
@@ -229,5 +263,115 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
         // Should not have texture binding
         assert!(!rewritten.contains("var my_texture"));
+    }
+
+    #[test]
+    fn test_vertex_and_instance_input_translation() {
+        let shader_src = r#"
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32, vertex: VertexInput, instance: InstanceInput) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+}
+"#;
+
+        let parsed = ParsedShader::parse(shader_src);
+
+        let texture_index_map = HashMap::new();
+        let atlas_binding_map = HashMap::new();
+
+        // Test 1: Default flags - should add vertex translation but not instance
+        let rewritten = ShaderRewriter::rewrite_shader(
+            &parsed,
+            RenderPipelineFlags::empty(),
+            &texture_index_map,
+            &atlas_binding_map,
+        );
+
+        // Should include vertex input structures
+        assert!(rewritten.contains("RawVertexInput"));
+        assert!(rewritten.contains("VertexInput"));
+        assert!(rewritten.contains("translate_raw_vertex_input"));
+        
+        // Should have raw_vertex parameter
+        assert!(rewritten.contains("raw_vertex"));
+        
+        // Should append vertex translation code
+        assert!(rewritten.contains("let vertex = translate_raw_vertex_input(raw_vertex)"));
+        
+        // Should NOT include instance input structures
+        assert!(!rewritten.contains("RawInstanceInput"));
+        assert!(!rewritten.contains("translate_raw_instance_input"));
+        assert!(rewritten.contains("InstanceInput"));
+        
+        // Should NOT have raw_instance parameter
+        assert!(!rewritten.contains("raw_instance"));
+        
+        // Should NOT append instance translation code
+        assert!(!rewritten.contains("let instance = translate_raw_instance_input(raw_instance)"));
+
+        // Test 2: With ALLOW_OBJECT_UNIFORM - should add both vertex and instance
+        let rewritten = ShaderRewriter::rewrite_shader(
+            &parsed,
+            RenderPipelineFlags::ALLOW_OBJECT_UNIFORM,
+            &texture_index_map,
+            &atlas_binding_map,
+        );
+
+        // Should include both vertex and instance input structures
+        assert!(rewritten.contains("RawVertexInput"));
+        assert!(rewritten.contains("VertexInput"));
+        assert!(rewritten.contains("RawInstanceInput"));
+        assert!(rewritten.contains("InstanceInput"));
+        
+        // Should have both parameters
+        assert!(rewritten.contains("raw_vertex"));
+        assert!(rewritten.contains("raw_instance"));
+        
+        // Should append both translation codes
+        assert!(rewritten.contains("let vertex = translate_raw_vertex_input(raw_vertex)"));
+        assert!(rewritten.contains("let instance = translate_raw_instance_input(raw_instance)"));
+
+        // Test 3: With OVERRIDE_VERTEX_INPUT - should not add vertex translation
+        let rewritten = ShaderRewriter::rewrite_shader(
+            &parsed,
+            RenderPipelineFlags::OVERRIDE_VERTEX_INPUT,
+            &texture_index_map,
+            &atlas_binding_map,
+        );
+
+        // Should NOT include vertex input structures
+        assert!(!rewritten.contains("RawVertexInput"));
+        assert!(!rewritten.contains("translate_raw_vertex_input"));
+        assert!(rewritten.contains("VertexInput"));
+        
+        // Should NOT have raw_vertex parameter
+        assert!(!rewritten.contains("raw_vertex"));
+        
+        // Should NOT append vertex translation code
+        assert!(!rewritten.contains("let vertex = translate_raw_vertex_input(raw_vertex)"));
+
+        // Test 4: With OVERRIDE_VERTEX_INPUT and ALLOW_OBJECT_UNIFORM - should only add instance
+        let rewritten = ShaderRewriter::rewrite_shader(
+            &parsed,
+            RenderPipelineFlags::OVERRIDE_VERTEX_INPUT | RenderPipelineFlags::ALLOW_OBJECT_UNIFORM,
+            &texture_index_map,
+            &atlas_binding_map,
+        );
+
+        // Should NOT include vertex input structures
+        assert!(!rewritten.contains("RawVertexInput"));
+        assert!(rewritten.contains("VertexInput"));
+        
+        // Should include instance input structures
+        assert!(rewritten.contains("RawInstanceInput"));
+        assert!(rewritten.contains("InstanceInput"));
+        
+        // Should have raw_instance but not raw_vertex
+        assert!(!rewritten.contains("raw_vertex"));
+        assert!(rewritten.contains("raw_instance"));
+        
+        // Should append instance translation but not vertex
+        assert!(!rewritten.contains("let vertex = translate_raw_vertex_input(raw_vertex)"));
+        assert!(rewritten.contains("let instance = translate_raw_instance_input(raw_instance)"));
     }
 }
