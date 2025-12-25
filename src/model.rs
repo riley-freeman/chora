@@ -1,7 +1,8 @@
-use cgmath::{Matrix4, Vector3, Rad, Quaternion, Rotation3};
+use cgmath::{Matrix4, Quaternion, Rad, Rotation3, Vector3};
 use wgpu::{Buffer, BufferUsages, Queue};
 use wgpu::Device;
 use wgpu::wgt::BufferDescriptor;
+use crate::coordination::Transform;
 use crate::mesh::{Mesh, WeakModel};
 
 use std::mem;
@@ -11,9 +12,7 @@ pub(crate) struct ModelInner {
     pub(crate) mutable: bool,
     pub(crate) meshes: Vec<Mesh>,
 
-    pub(crate) position: *const Vector3<f32>,
-    pub(crate) rotation: *const Vector3<f32>,
-    pub(crate) scale: *const Vector3<f32>,
+    pub(crate) transform: *const Transform,
 
     pub(crate) model_buffer: Buffer,
     pub(crate) model_buffer_info: Mutex<ModelBufferStruct>,
@@ -41,8 +40,7 @@ impl Default for ModelBufferStruct {
 }
 
 impl Model {
-    pub fn new(device: &Device, queue: &Queue, meshes: Vec<Mesh>, mutable: bool,
-               position: *const f32, rotation: *const f32, scale: *const f32) -> Self
+    pub fn new(device: &Device, queue: &Queue, meshes: Vec<Mesh>, mutable: bool, transform: &Transform) -> Self
     {
         // Create a buffer for the model's render data
         let model_buffer = device.create_buffer(&BufferDescriptor {
@@ -54,9 +52,7 @@ impl Model {
 
         let buffer_info = unsafe { ModelBufferStruct {
             model_matrix: Self::compute_matrix(
-                &*(position as *const Vector3<f32>),
-                &*(rotation as *const Vector3<f32>),
-                &*(scale as *const Vector3<f32>),
+                &*(transform as *const Transform),
             )
         }};
         let model_buffer_info = Mutex::new(buffer_info);
@@ -67,9 +63,7 @@ impl Model {
             mutable,
             meshes,
 
-            position: position as _,
-            rotation: rotation as _,
-            scale: scale as _,
+            transform: transform as _,
 
             model_buffer,
             model_buffer_info,
@@ -89,20 +83,18 @@ impl Model {
     }
 
     /// Compute a model matrix from position, rotation (Euler angles in radians), and scale
-    fn compute_matrix(position: &Vector3<f32>, rotation: &Vector3<f32>, scale: &Vector3<f32>) -> Matrix4<f32> {
+    fn compute_matrix(transform: &Transform) -> Matrix4<f32> {
         // Create translation matrix
-        let translation = Matrix4::from_translation(*position);
+        let translation = Matrix4::from_translation(transform.position());
 
-        // Create rotation matrix from Euler angles (pitch, yaw, roll)
-        // Apply rotations in order: Z (roll) -> X (pitch) -> Y (yaw)
-        let rotation_x = Quaternion::from_angle_x(Rad(rotation.x));
-        let rotation_y = Quaternion::from_angle_y(Rad(rotation.y));
-        let rotation_z = Quaternion::from_angle_z(Rad(rotation.z));
-        let rotation_quat = rotation_y * rotation_x * rotation_z;
-        let rotation_matrix = Matrix4::from(rotation_quat);
+        // Create rotation matrix
+        let rotation_matrix = Matrix4::from(transform.rotation());
 
         // Create scale matrix
+        let scale = transform.scale();
         let scale_matrix = Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
+
+        transform.updated.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Combine: translation * rotation * scale (TRS order)
         translation * rotation_matrix * scale_matrix
@@ -118,12 +110,11 @@ impl Model {
     /// Call this after modifying the position, rotation, or scale vectors
     pub fn update_matrix(&self) {
         unsafe {
-            let position = &*self.inner.position;
-            let rotation = &*self.inner.rotation;
-            let scale = &*self.inner.scale;
-
-            let new_matrix = Self::compute_matrix(position, rotation, scale);
-            self.inner.model_buffer_info.lock().unwrap().model_matrix = new_matrix;
+            let transform = &*self.inner.transform;
+            if transform.updated.load(std::sync::atomic::Ordering::Relaxed) == true {
+                let new_matrix = Self::compute_matrix(transform);
+                self.inner.model_buffer_info.lock().unwrap().model_matrix = new_matrix;
+            }
         }
     }
 
@@ -156,11 +147,6 @@ impl Model {
     /// Check if this model is mutable (allows matrix updates)
     pub fn is_mutable(&self) -> bool {
         self.inner.mutable
-    }
-
-    /// Get raw pointers to position/rotation/scale (for advanced use)
-    pub fn transform_ptrs(&self) -> (*const Vector3<f32>, *const Vector3<f32>, *const Vector3<f32>) {
-        (self.inner.position, self.inner.rotation, self.inner.scale)
     }
 
     /// Create a weak reference to this model
@@ -205,6 +191,7 @@ mod tests {
     use super::*;
     use crate::Renderer;
     use crate::render_pipeline::RenderPipelineFlags;
+    use cgmath::Euler;
     use wgpu::AddressMode;
     use wgpu::FilterMode;
     use std::path::Path;
@@ -240,17 +227,17 @@ mod tests {
             .unwrap();
 
         // Create model with transformation
-        let position = Vector3::new(1.0, 2.0, 3.0);
-        let rotation = Vector3::new(0.0, std::f32::consts::PI / 4.0, 0.0); // 45 degrees around Y
-        let scale = Vector3::new(2.0, 2.0, 2.0);
+        let transform = Transform::new(
+            Vector3::new(1.0, 2.0, 3.0),
+            Quaternion::from(Euler::new(Rad(0.0), Rad(std::f32::consts::PI / 4.0), Rad(0.0))),
+            Vector3::new(2.0, 2.0, 2.0),
+        );
 
         let model = renderer
             .create_model(
                 vec![mesh],
                 true,
-                &position,
-                &rotation,
-                &scale,
+                &transform
             )
             .unwrap();
 
@@ -296,18 +283,15 @@ mod tests {
         let indices = [0, 1, 2];
         let mesh = renderer.create_mesh(&vertices, &indices, render_pipeline).unwrap();
 
-        let mut position = Vector3::new(0.0, 0.0, 0.0);
-        let rotation = Vector3::new(0.0, 0.0, 0.0);
-        let scale = Vector3::new(1.0, 1.0, 1.0);
-
+        let mut transform = Transform::default();
         let model = renderer
-            .create_model(vec![mesh], true, &position, &rotation, &scale)
+            .create_model(vec![mesh], true, &transform)
             .unwrap();
 
         let initial_matrix = model.model_matrix();
 
         // Modify position
-        position.x = 5.0;
+        transform.set_position_x(5.0);
         model.update_matrix();
 
         let updated_matrix = model.model_matrix();

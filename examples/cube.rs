@@ -1,5 +1,5 @@
-use cgmath::Vector3;
-use chora::Renderer;
+use cgmath::{EuclideanSpace, Euler, Quaternion, Rad, Vector3, Zero};
+use chora::{Renderer, coordination::Transform};
 use chora::render_pipeline::RenderPipelineFlags;
 use winit::{
     event::{Event, WindowEvent},
@@ -100,12 +100,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let mesh = renderer.create_mesh(&vertices, &indices, render_pipeline).unwrap();
 
-    let position = Vector3::<f32>::new(0.0, 0.0, -2.5);
-    let rotation= Vector3::<f32>::new(0.0, 1.0, 0.0);
-    let scale= Vector3::<f32>::new(1.0, 1.0, 1.0);
-    let model = renderer.create_model(vec![mesh], true, &position, &rotation, &scale).unwrap();
+    let mut transform = Box::new(Transform::default());
+    transform.set_position(Vector3::new(0.0, 0.0, -2.0));
+    let model = renderer.create_model(vec![mesh], true, &transform).unwrap();
+
     renderer.add_to_render_queue(&model).unwrap();
 
+    let mut scalar = 0.0f32;
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent {
@@ -124,9 +125,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             Event::WindowEvent {
                 event: WindowEvent::RedrawRequested,
                 ..
-            } => { 
+            } => {
+                scalar += 0.015;
+                transform.set_position_y(f32::sin(scalar) * 0.2);
+                transform.set_rotation(Quaternion::from(Euler::new(Rad(3.14/4.0), Rad(scalar), Rad(scalar))));
+                
+                println!("RENDER: {:?}", transform.rotation());
                 renderer.render().unwrap();
                 renderer.present().unwrap();
+                window.request_redraw();
+            }
+            Event::AboutToWait => {
+                window.request_redraw();
             }
             _ => {}
         }

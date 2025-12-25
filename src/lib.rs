@@ -1,4 +1,5 @@
 use crate::camera::{Camera, CameraBufferStruct};
+use crate::coordination::Transform;
 use crate::instanced_render::InstancedRender;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
@@ -329,9 +330,7 @@ impl Renderer {
         &self,
         meshes: Vec<Mesh>,
         mutable: bool,
-        position: &Vector3<f32>,
-        rotation: &Vector3<f32>,
-        scale: &Vector3<f32>,
+        transform: &Transform,
     ) -> Result<Model, error::ChoraError> {
         let device = self.device();
         let queue = self.queue();
@@ -341,9 +340,7 @@ impl Renderer {
             &queue,
             meshes,
             mutable,
-            position as *const _ as _,
-            rotation as *const _ as _,
-            scale as *const _ as _,
+            transform,
         ))
     }
 
@@ -771,6 +768,7 @@ impl Renderer {
                                 let mesh_lock = mesh_inner.lock().unwrap();
                                 render_pass.set_vertex_buffer(0, mesh_lock._vertex_buffer.slice(..));
                                 if let Some(model) = mesh_lock.get_parent_model() {
+                                    model.update_matrix_and_upload(&this.queue);
                                     render_pass.set_vertex_buffer(1, model.model_buffer().slice(..))
                                 }
                                 render_pass.set_index_buffer(mesh_lock._index_buffer.slice(..), wgpu::IndexFormat::Uint32);

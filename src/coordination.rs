@@ -1,4 +1,121 @@
+use std::sync::atomic::AtomicBool;
+
 use cgmath::num_traits::Num;
+use cgmath::{Quaternion, Vector3, Vector4, Zero};
+pub struct Transform {
+    position: Vector3<f32>,
+    rotation: Quaternion<f32>,
+    scale: Vector3<f32>,
+    pub(crate) updated: AtomicBool,
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::new(
+            Vector3::new(0.0, 0.0, 0.0), 
+            Quaternion::from_sv(0.0, Vector3::zero()), 
+            Vector3::new(1.0, 1.0, 1.0),
+        )
+    }
+}
+
+impl Transform {
+    pub fn new(pos: Vector3<f32>, rot: Quaternion<f32>, size: Vector3<f32>) -> Self {
+        Self {
+            position: pos,
+            rotation: rot,
+            scale: size,
+            updated: AtomicBool::new(false),
+        }
+    }
+
+    pub fn position(&self) -> Vector3<f32> {
+        self.position.clone()
+    }
+
+    pub fn rotation(&self) -> Quaternion<f32> {
+        self.rotation.clone()
+    }
+
+    pub fn scale(&self) -> Vector3<f32> {
+        self.scale.clone()
+    }
+
+    pub fn set_position(&mut self, pos: Vector3<f32>) {
+        self.position = pos;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn set_rotation(&mut self, rot: Quaternion<f32>) {
+        self.rotation = rot;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn set_scale(&mut self, size: Vector3<f32>) {
+        self.scale = size;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the X component of the position vector.
+    pub fn set_position_x(&mut self, x: f32) {
+        self.position.x = x;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the Y component of the position vector.
+    pub fn set_position_y(&mut self, y: f32) {
+        self.position.y = y;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the Z component of the position vector.
+    pub fn set_position_z(&mut self, z: f32) {
+        self.position.z = z;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the X component of the scale vector.
+    pub fn set_scale_x(&mut self, x: f32) {
+        self.scale.x = x;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the Y component of the scale vector.
+    pub fn set_scale_y(&mut self, y: f32) {
+        self.scale.y = y;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the Z component of the scale vector.
+    pub fn set_scale_z(&mut self, z: f32) {
+        self.scale.z = z;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the X component of the rotation quaternion.
+    pub fn set_rotation_x(&mut self, x: f32) {
+        self.rotation.v.x = x;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the Y component of the rotation quaternion.
+    pub fn set_rotation_y(&mut self, y: f32) {
+        self.rotation.v.y = y;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the Z component of the rotation quaternion.
+    pub fn set_rotation_z(&mut self, z: f32) {
+        self.rotation.v.z = z;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the scalar (w) component of the rotation quaternion.
+    pub fn set_rotation_w(&mut self, w: f32) {
+        self.rotation.s = w;
+        self.updated.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct Rectangle<T: Num + Clone + Default> {
