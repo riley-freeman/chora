@@ -1,4 +1,4 @@
-use crate::camera::Camera;
+use crate::camera::{Camera, CameraBufferStruct};
 use crate::instanced_render::InstancedRender;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
@@ -77,9 +77,11 @@ struct RendererInner {
     queue: Queue,
     buffers: usize,
 
-    cast_render_pipeline: wgpu::RenderPipeline,
     cast_bind_group_layout: BindGroupLayout,
+    cast_render_pipeline: wgpu::RenderPipeline,
     cast_sampler: wgpu::Sampler,
+
+    camera_bind_group_layout: BindGroupLayout,
 
     // Swapchain support (optional)
     surface: Option<Surface<'static>>,
@@ -120,14 +122,24 @@ impl Renderer {
         }))
         .map_err(|_| error::ChoraError::FailedGettingSuitableDevice {})?;
 
+        // Create a bind group layout and render pipeline
+        let cast_bind_group_layout = Self::create_cast_bind_group_layout(&device);
+
+        let cast_render_pipeline =
+            Self::create_cast_render_pipeline(&device, &cast_bind_group_layout, TextureFormat::Rgba8Unorm);
+
+        let cast_sampler = device.create_sampler(&SamplerDescriptor::default());
+
+        let camera_bind_group_layout = Self::create_camera_bind_group_layout(&device);
+
         let position = Box::new(Vector3::new(0.0f32, 0.0f32, 0.0f32));
         let pitch = Box::new(0.0f32);
         let yaw = Box::new(0.0f32);
         let roll = Box::new(0.0f32);
         let fov = 77.0f32;
-
         let camera = Camera::new(
             &device,
+            &camera_bind_group_layout,
             width,
             height,
             buffers,
@@ -139,15 +151,6 @@ impl Renderer {
             &yaw,
             &roll,
         )?;
-
-        // Create a bind group layout and render pipeline
-
-        let cast_bind_group_layout = Self::create_cast_bind_group_layout(&device);
-
-        let cast_render_pipeline =
-            Self::create_cast_render_pipeline(&device, &cast_bind_group_layout, TextureFormat::Rgba8Unorm);
-
-        let cast_sampler = device.create_sampler(&SamplerDescriptor::default());
 
         let inner = RendererInner {
             _adapter: adapter,
@@ -165,6 +168,8 @@ impl Renderer {
             cast_render_pipeline,
             cast_sampler,
 
+            camera_bind_group_layout,
+
             surface: None,
             surface_config: None,
 
@@ -177,6 +182,31 @@ impl Renderer {
         let result = Renderer(Arc::new(Mutex::new(inner)));
 
         Ok(result)
+    }
+
+    fn create_camera_bind_group_layout(device: &Device) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&BindGroupLayoutDescriptor { label: None, entries: &[
+            // BindGroupLayoutEntry {
+            //     binding: 0,
+            //     count: None,
+            //     ty: BindingType::Buffer {
+            //         ty: wgpu::BufferBindingType::Uniform,
+            //         has_dynamic_offset: false,
+            //         min_binding_size: None
+            //     },
+            //     visibility: ShaderStages::VERTEX,
+            // },
+            BindGroupLayoutEntry {
+                binding: 1,
+                count: None,
+                ty: BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: std::num::NonZeroU64::new(size_of::<CameraBufferStruct>() as u64),
+                },
+                visibility: ShaderStages::VERTEX,
+            },
+        ]})
     }
 
     fn create_cast_render_pipeline(
@@ -265,6 +295,7 @@ impl Renderer {
 
         Camera::new(
             &this.device,
+            &this.camera_bind_group_layout,
             width,
             height,
             this.buffers,
@@ -303,9 +334,11 @@ impl Renderer {
         scale: &Vector3<f32>,
     ) -> Result<Model, error::ChoraError> {
         let device = self.device();
+        let queue = self.queue();
 
         Ok(Model::new(
             &device,
+            &queue,
             meshes,
             mutable,
             position as *const _ as _,
@@ -362,6 +395,7 @@ impl Renderer {
         RenderPipeline::new(
             &lock.device,
             &lock.camera,
+            &lock.camera_bind_group_layout,
             code,
             textures,
             sampler,
@@ -382,6 +416,7 @@ impl Renderer {
         RenderPipeline::new(
             &lock.device,
             &lock.camera,
+            &lock.camera_bind_group_layout,
             code,
             textures,
             sampler,
@@ -390,7 +425,7 @@ impl Renderer {
         )
     }
 
-    pub fn add_to_render_queue(&mut self, model: Model) -> Result<(), error::ChoraError> {
+    pub fn add_to_render_queue(&mut self, model: &Model) -> Result<(), error::ChoraError> {
         for mesh in model.into_iter() {
             self.add_mesh_to_render_queue(&mesh)?;
             mesh.added.store(true, Ordering::Relaxed);
@@ -680,6 +715,7 @@ impl Renderer {
         // 1. Acquire the camera's current output texture view
         let camera = &this.camera;
         let camera_view = camera.current_output_texture_view();
+        let camera_bindgroup = camera.bind_group(0).unwrap();
         let depth_view = camera.depth_texture_view();
 
         let mut encoder = this
@@ -725,6 +761,7 @@ impl Renderer {
                      if let Some(pipeline) = weak_pipeline.upgrade() {
                         let pipeline_lock = pipeline.inner.lock().unwrap();
                         render_pass.set_pipeline(&pipeline_lock._render_pipeline);
+                        render_pass.set_bind_group(0, &camera_bindgroup, &[]);
                         render_pass.set_bind_group(pipeline_lock.texture_bind_group_index, &pipeline_lock._texture_bind_group, &[]);
 
                         // We need to access the mesh to get its buffers

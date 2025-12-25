@@ -11,8 +11,15 @@ pub struct GlobalDeclaration {
 }
 
 #[derive(Debug, Clone)]
+pub struct StructDeclaration {
+    pub full_text: String,
+    pub _name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    pub attributes: String, // Stores @vertex, @fragment, etc.
     pub parameters: HashMap<String, Parameter>,
     pub return_type: Option<String>,
     pub body: String,
@@ -21,16 +28,22 @@ pub struct Function {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
-    pub name        : String, 
+    pub name        : String,
     pub position    : usize,
     pub data_type   : String,
     pub location    : Option<String>,
 }
 
 #[derive(Debug, Clone)]
+pub enum Declaration {
+    Global(GlobalDeclaration),
+    Struct(StructDeclaration),
+    Function(Function),
+}
+
+#[derive(Debug, Clone)]
 pub struct ParsedShader {
-    pub globals: Vec<GlobalDeclaration>,
-    pub functions: Vec<Function>,
+    pub declarations: Vec<Declaration>,
     pub vertex_entry: Option<Function>,
     pub fragment_entry: Option<Function>,
     pub texture_references: HashMap<String, u32>, // texture_name -> original binding
@@ -38,13 +51,25 @@ pub struct ParsedShader {
 
 impl ParsedShader {
     pub fn parse(source: &str) -> Self {
-        let mut parsed = ParsedShader {
-            globals: Vec::new(),
-            functions: Vec::new(),
-            vertex_entry: None,
-            fragment_entry: None,
-            texture_references: HashMap::new(),
-        };
+        let mut texture_references = HashMap::new();
+        let mut vertex_entry = None;
+        let mut fragment_entry = None;
+
+        // Track all declarations with their positions to preserve order
+        let mut items: Vec<(usize, Declaration)> = Vec::new();
+
+        // Parse struct declarations
+        let struct_regex = Regex::new(r"struct\s+(\w+)\s*\{[^}]*\}").unwrap();
+        for cap in struct_regex.captures_iter(source) {
+            let position = cap.get(0).unwrap().start();
+            let name = cap[1].to_string();
+            let full_text = cap[0].to_string();
+
+            items.push((position, Declaration::Struct(StructDeclaration {
+                full_text,
+                _name: name,
+            })));
+        }
 
         // Parse global variable declarations with @group and @binding
         let global_regex = Regex::new(
@@ -52,6 +77,7 @@ impl ParsedShader {
         ).unwrap();
 
         for cap in global_regex.captures_iter(source) {
+            let position = cap.get(0).unwrap().start();
             let group = cap[1].parse::<u32>().unwrap();
             let binding = cap[2].parse::<u32>().unwrap();
             let var_name = cap[3].to_string();
@@ -60,45 +86,91 @@ impl ParsedShader {
             // Track texture references
             if var_type.contains("texture_2d") || var_type.contains("texture_3d") ||
                var_type.contains("texture_cube") {
-                parsed.texture_references.insert(var_name.clone(), binding);
+                texture_references.insert(var_name.clone(), binding);
             }
 
-            parsed.globals.push(GlobalDeclaration {
+            items.push((position, Declaration::Global(GlobalDeclaration {
                 full_text: cap[0].to_string(),
                 group,
                 binding,
                 var_name,
                 var_type,
-            });
+            })));
         }
 
         // Parse functions (including entry points)
-        // Simple approach: find "fn name(" and extract until matching closing brace
-        parsed.functions = Self::extract_functions(source);
+        let functions = Self::extract_functions(source);
+        for func in functions {
+            // Find position in source
+            if let Some(pos) = source.find(&func.full_text) {
+                // Check if this is an entry point
+                if func.name == "vs_main" {
+                    vertex_entry = Some(func.clone());
+                } else if func.name == "fs_main" {
+                    fragment_entry = Some(func.clone());
+                }
 
-        // Find entry points
-        for func in &parsed.functions {
-            if func.name == "vs_main" {
-                parsed.vertex_entry = Some(func.clone());
-            } else if func.name == "fs_main" {
-                parsed.fragment_entry = Some(func.clone());
+                items.push((pos, Declaration::Function(func)));
             }
         }
 
-        parsed
-    }
+        // Sort by position to preserve original order
+        items.sort_by_key(|(pos, _)| *pos);
+        let declarations = items.into_iter().map(|(_, decl)| decl).collect();
 
-    /// Get all non-entry-point functions (helper functions)
-    pub fn helper_functions(&self) -> Vec<&Function> {
-        self.functions
-            .iter()
-            .filter(|f| f.name != "vs_main" && f.name != "fs_main")
-            .collect()
+        ParsedShader {
+            declarations,
+            vertex_entry,
+            fragment_entry,
+            texture_references,
+        }
     }
 
     /// Get all texture variable names
     pub fn texture_names(&self) -> Vec<&String> {
         self.texture_references.keys().collect()
+    }
+
+    /// Find attributes (like @vertex, @fragment) before a function declaration
+    fn find_function_attributes(source: &str, function_start_pos: usize) -> String {
+        let chars: Vec<char> = source.chars().collect();
+        let mut attr_start = function_start_pos;
+
+        // First, skip to the beginning of the current line (before "fn")
+        let mut line_start = function_start_pos;
+        while line_start > 0 && chars[line_start - 1] != '\n' {
+            line_start -= 1;
+        }
+
+        // Now go backward line by line, checking each line for @ attributes
+        let mut i = line_start;
+        while i > 0 {
+            // Move to the previous line
+            i -= 1; // Skip the newline
+            let line_end = i;
+
+            // Find the start of this line
+            while i > 0 && chars[i - 1] != '\n' {
+                i -= 1;
+            }
+            let prev_line_start = i;
+
+            // Check if this line has an @ attribute (after skipping leading whitespace)
+            let mut j = prev_line_start;
+            while j < line_end && chars[j].is_whitespace() && chars[j] != '\n' {
+                j += 1;
+            }
+
+            if j < line_end && chars[j] == '@' {
+                // This line has an attribute, include it
+                attr_start = prev_line_start;
+            } else {
+                // This line doesn't have an attribute, stop searching
+                break;
+            }
+        }
+
+        source[attr_start..function_start_pos].trim().to_string()
     }
 
     /// Extract functions from source by manual brace matching
@@ -110,6 +182,9 @@ impl ParsedShader {
         for cap in fn_regex.captures_iter(source) {
             let name = cap[1].to_string();
             let start_pos = cap.get(0).unwrap().start();
+
+            // Find attributes before the function (like @vertex, @fragment)
+            let attributes = Self::find_function_attributes(source, start_pos);
 
             // Find the opening brace of the function body
             if let Some(open_brace_pos) = source[start_pos..].find('{') {
@@ -131,7 +206,7 @@ impl ParsedShader {
                     );
                 }
 
-                // Create a slice to find the return type 
+                // Create a slice to find the return type
                 let return_type = if let Some(return_token_pos) = source[start_pos..].find('>') {
                     let return_start = return_token_pos + start_pos + 1;
                     let unfiltered = String::from(&source[return_start..body_start]);
@@ -147,6 +222,7 @@ impl ParsedShader {
                     let body = &source[body_start+1..body_end];
                     functions.push(Function {
                         name,
+                        attributes,
                         parameters,
                         return_type,
                         body: body.to_string(),
@@ -198,35 +274,45 @@ fn dummy(idx: u32, vert: VertexInput, inst: InstanceInput) {}
 "#;
 
         let parsed = ParsedShader::parse(shader);
-        assert_eq!(parsed.functions.len(), 2);
+
+        // Extract functions from declarations
+        let functions: Vec<&Function> = parsed.declarations.iter().filter_map(|d| {
+            if let Declaration::Function(f) = d {
+                Some(f)
+            } else {
+                None
+            }
+        }).collect();
+
+        assert_eq!(functions.len(), 2);
         assert!(parsed.vertex_entry.is_some());
 
         {
-            assert_eq!(parsed.functions[0].name, "vs_main");
-            assert_eq!(parsed.functions[0].parameters.len(), 3);
-            assert_eq!(parsed.functions[0].return_type, Some("@builtin(position)vec4<f32>".to_string()));
+            assert_eq!(functions[0].name, "vs_main");
+            assert_eq!(functions[0].parameters.len(), 3);
+            assert_eq!(functions[0].return_type, Some("@builtin(position)vec4<f32>".to_string()));
 
-            assert_eq!(parsed.functions[0].parameters.get("idx").unwrap().location, Some("@builtin(vertex_index)".to_string()));
-            assert_eq!(parsed.functions[0].parameters.get("vertex").unwrap().location, None);
-            assert_eq!(parsed.functions[0].parameters.get("instance").unwrap().location, None);
+            assert_eq!(functions[0].parameters.get("idx").unwrap().location, Some("@builtin(vertex_index)".to_string()));
+            assert_eq!(functions[0].parameters.get("vertex").unwrap().location, None);
+            assert_eq!(functions[0].parameters.get("instance").unwrap().location, None);
 
-            assert_eq!(parsed.functions[0].parameters.get("idx").unwrap().data_type, "u32");
-            assert_eq!(parsed.functions[0].parameters.get("vertex").unwrap().data_type, "VertexInput");
-            assert_eq!(parsed.functions[0].parameters.get("instance").unwrap().data_type, "InstanceInput");
+            assert_eq!(functions[0].parameters.get("idx").unwrap().data_type, "u32");
+            assert_eq!(functions[0].parameters.get("vertex").unwrap().data_type, "VertexInput");
+            assert_eq!(functions[0].parameters.get("instance").unwrap().data_type, "InstanceInput");
         }
 
         {
-            assert_eq!(parsed.functions[1].name, "dummy");
-            assert_eq!(parsed.functions[1].parameters.len(), 3);
-            assert_eq!(parsed.functions[1].return_type, None);
+            assert_eq!(functions[1].name, "dummy");
+            assert_eq!(functions[1].parameters.len(), 3);
+            assert_eq!(functions[1].return_type, None);
 
-            assert_eq!(parsed.functions[1].parameters.get("idx").unwrap().location, None);
-            assert_eq!(parsed.functions[1].parameters.get("vert").unwrap().location, None);
-            assert_eq!(parsed.functions[1].parameters.get("inst").unwrap().location, None);
+            assert_eq!(functions[1].parameters.get("idx").unwrap().location, None);
+            assert_eq!(functions[1].parameters.get("vert").unwrap().location, None);
+            assert_eq!(functions[1].parameters.get("inst").unwrap().location, None);
 
-            assert_eq!(parsed.functions[1].parameters.get("idx").unwrap().data_type, "u32");
-            assert_eq!(parsed.functions[1].parameters.get("vert").unwrap().data_type, "VertexInput");
-            assert_eq!(parsed.functions[1].parameters.get("inst").unwrap().data_type, "InstanceInput");
+            assert_eq!(functions[1].parameters.get("idx").unwrap().data_type, "u32");
+            assert_eq!(functions[1].parameters.get("vert").unwrap().data_type, "VertexInput");
+            assert_eq!(functions[1].parameters.get("inst").unwrap().data_type, "InstanceInput");
         }
     }
 
@@ -249,7 +335,9 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
         let parsed = ParsedShader::parse(shader);
 
-        assert_eq!(parsed.globals.len(), 2);
+        // Count globals from declarations
+        let globals_count = parsed.declarations.iter().filter(|d| matches!(d, Declaration::Global(_))).count();
+        assert_eq!(globals_count, 2);
         assert_eq!(parsed.texture_references.len(), 1);
         assert!(parsed.texture_references.contains_key("my_texture"));
         assert!(parsed.vertex_entry.is_some());

@@ -19,6 +19,7 @@ pub(crate) struct ModelInner {
     pub(crate) model_buffer_info: Mutex<ModelBufferStruct>,
 }
 
+#[derive(Clone)]
 pub struct Model {
     inner: Arc<ModelInner>,
 }
@@ -40,27 +41,26 @@ impl Default for ModelBufferStruct {
 }
 
 impl Model {
-    pub fn new(device: &Device, meshes: Vec<Mesh>, mutable: bool,
+    pub fn new(device: &Device, queue: &Queue, meshes: Vec<Mesh>, mutable: bool,
                position: *const f32, rotation: *const f32, scale: *const f32) -> Self
     {
         // Create a buffer for the model's render data
         let model_buffer = device.create_buffer(&BufferDescriptor {
             size: mem::size_of::<ModelBufferStruct>() as _,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
             label: Some("Model Buffer"),
         });
 
-        let model_buffer_info = Mutex::new(unsafe {
-            ModelBufferStruct {
-                model_matrix: Self::compute_matrix(
-                    &*(position as *const Vector3<f32>),
-                    &*(rotation as *const Vector3<f32>),
-                    &*(scale as *const Vector3<f32>),
-                )
-            }
-        });
-        
+        let buffer_info = unsafe { ModelBufferStruct {
+            model_matrix: Self::compute_matrix(
+                &*(position as *const Vector3<f32>),
+                &*(rotation as *const Vector3<f32>),
+                &*(scale as *const Vector3<f32>),
+            )
+        }};
+        let model_buffer_info = Mutex::new(buffer_info);
+        queue.write_buffer(&model_buffer, 0, bytemuck::cast_slice(&[buffer_info]));
 
 
         let inner = ModelInner {

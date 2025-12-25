@@ -17,10 +17,10 @@ struct VertexInput {
 }
 
 fn translate_raw_vertex_input(raw: RawVertexInput) -> VertexInput {
-    return VertexInput {
-        position: raw.pos.xyz,
-        texture: vec2<f32>(raw.tan_u.w, raw.bitan_v.w),
-        tangent: raw.tan_u.xyz,
-        bi_tangent: raw.bitan_v.xyz,
-    };
+    var result: VertexInput;
+    result.position = raw.pos.xyz;
+    result.texture = vec2<f32>(raw.tan_u.w, raw.bitan_v.w);
+    result.tangent = raw.tan_u.xyz;
+    result.bi_tangent = raw.bitan_v.xyz;
+    return result;
 }

@@ -5,7 +5,7 @@ use std::mem::{offset_of, size_of};
 
 use cgmath::{Matrix4, Vector3, Rad, Quaternion, Rotation3, PerspectiveFov, Ortho};
 use wgpu::wgt::BufferDescriptor;
-use wgpu::{BufferUsages, ColorTargetState, ColorWrites};
+use wgpu::{BindGroup, BindGroupLayout, BufferUsages, ColorTargetState, ColorWrites};
 use wgpu::TextureViewDescriptor;
 use wgpu::Buffer;
 use wgpu::CompareFunction::Less;
@@ -32,6 +32,7 @@ struct CameraInner {
 
     view_proj_matrix: Matrix4<f32>,
     camera_buffers: Vec<Buffer>,
+    bind_groups: Vec<BindGroup>,
 
     output_images: Vec<Texture>,
     depth_image: Texture,
@@ -56,6 +57,7 @@ unsafe impl bytemuck::Zeroable for CameraBufferStruct {}
 impl Camera {
     pub fn new(
         device: &Device,
+        bind_group_layout: &BindGroupLayout,
         width: u32,
         height: u32,
         buffers: usize,
@@ -127,6 +129,20 @@ impl Camera {
             camera_buffers.push(buffer);
         }
 
+        // Create bind groups for each camera buffer
+        let mut bind_groups = Vec::with_capacity(buffers);
+        for buffer in &camera_buffers {
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("camera_bind_group"),
+                layout: &bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer.as_entire_binding(),
+                }],
+            });
+            bind_groups.push(bind_group);
+        }
+
 
 
         let inner = CameraInner {
@@ -136,9 +152,10 @@ impl Camera {
             position: position as _,
             pitch: pitch as _,
             yaw: yaw as _, 
-            roll: roll as _, 
+            roll: roll as _,
             view_proj_matrix,
             camera_buffers,
+            bind_groups,
             output_images, 
             depth_image,
             output_image_views,
@@ -271,6 +288,11 @@ impl Camera {
     pub(crate) fn _uniform_buffer(&self, index: usize) -> Option<wgpu::Buffer> {
         let lock = self.0.lock().unwrap();
         lock.camera_buffers.get(index).map(|r| r.clone())
+    }
+
+    pub(crate) fn bind_group(&self, index: usize) -> Option<BindGroup> {
+        let lock = self.0.lock().unwrap();
+        lock.bind_groups.get(index).map(|r| r.clone())
     }
 }
 

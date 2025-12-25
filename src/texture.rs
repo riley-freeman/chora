@@ -136,9 +136,9 @@ impl Texture {
             ],
         });
         let inner = TextureInner {
-            texture: texture,
             bind_group,
             view,
+            texture: texture,
             _renderer: renderer,
         };
 

@@ -10,7 +10,7 @@ struct InstanceInput {
 }
 
 fn translate_raw_instance_input(raw: RawInstanceInput) -> InstanceInput {
-    return InstanceInput {
-        model: mat4x4<f32>(raw.model_0, raw.model_1, raw.model_2, raw.model_3),
-    };
+    var result: InstanceInput;
+    result.model = mat4x4<f32>(raw.model_0, raw.model_1, raw.model_2, raw.model_3);
+    return result;
 }

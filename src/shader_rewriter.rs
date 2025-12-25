@@ -41,88 +41,78 @@ impl ShaderRewriter {
         }
 
 
-        // Update whether or not to allow the instance parameter
-        if let Some(vertex_func) = &mut shader.vertex_entry {
-            if !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT) {
-                rewritten.push_str(VERTEX_INPUT_WGSL);
-                rewritten.push('\n');
+        // Update vertex function parameters in the declarations vector
+        for decl in &mut shader.declarations {
+            if let crate::shader_parser::Declaration::Function(func) = decl {
+                if func.name == "vs_main" {
+                    if !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT) {
+                        rewritten.push_str(VERTEX_INPUT_WGSL);
+                        rewritten.push('\n');
 
-                // Remove any user-added vertex parameter (remove both "vertex" and "raw_vertex" to be safe)
-                let _ = vertex_func.parameters.remove("vertex");
-                let _ = vertex_func.parameters.remove("raw_vertex");
-                
-                vertex_func.parameters.insert("raw_vertex".to_string(), Parameter {
-                    location: None,
-                    position: usize::MAX - 1,
-                    data_type: String::from("RawVertexInfo"),
-                    name: "vertex".to_string(),
-                });
+                        // Remove any user-added vertex parameter (remove both "vertex" and "raw_vertex" to be safe)
+                        let _ = func.parameters.remove("vertex");
+                        let _ = func.parameters.remove("raw_vertex");
+
+                        func.parameters.insert("raw_vertex".to_string(), Parameter {
+                            location: None,
+                            position: usize::MAX - 1,
+                            data_type: String::from("RawVertexInput"),
+                            name: "raw_vertex".to_string(),
+                        });
+                    }
+
+                    if flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM) {
+                        // Remove raw_instance and instance to be safe when we're adding our own instance parameter
+                        let _ = func.parameters.remove("raw_instance");
+                        let _ = func.parameters.remove("instance");
+
+                        rewritten.push_str(INSTANCE_INPUT_WGSL);
+                        rewritten.push('\n');
+
+                        func.parameters.insert("raw_instance".to_string(), Parameter {
+                            location: None,
+                            position: usize::MAX,
+                            data_type: String::from("RawInstanceInput"),
+                            name: "raw_instance".to_string(),
+                        });
+                    }
+                    break;
+                }
             }
+        }
 
-            if flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM) {
-                // Remove raw_instance and instance to be safe when we're adding our own instance parameter
-                let _ = vertex_func.parameters.remove("raw_instance");
-                let _ = vertex_func.parameters.remove("instance");
-                
-                rewritten.push_str(INSTANCE_INPUT_WGSL);
-                rewritten.push('\n');
 
-                vertex_func.parameters.insert("raw_instance".to_string(), Parameter {
-                    location: None,
-                    position: usize::MAX,
-                    data_type: String::from("RawInstanceInput"),
-                    name: "raw_instance".to_string(),
-                });
+        // Iterate through all declarations in order to preserve structure
+        for decl in &shader.declarations {
+            match decl {
+                crate::shader_parser::Declaration::Struct(s) => {
+                    // Always keep struct declarations
+                    rewritten.push_str(&s.full_text);
+                    rewritten.push_str("\n\n");
+                }
+                crate::shader_parser::Declaration::Global(g) => {
+                    // Remove texture bindings (they'll be replaced with atlas bindings)
+                    // Keep sampler bindings and other declarations
+                    if shader.texture_references.contains_key(&g.var_name) {
+                        // Skip texture bindings - they'll be replaced with atlas bindings
+                        continue;
+                    }
+                    // Keep samplers and other bindings
+                    rewritten.push_str(&g.full_text);
+                    rewritten.push_str("\n\n");
+                }
+                crate::shader_parser::Declaration::Function(func) => {
+                    // Rewrite function (handles both entry points and helper functions)
+                    let rewritten_func = Self::rewrite_function_body(
+                        &func,
+                        flags,
+                        texture_index_map,
+                        atlas_binding_map,
+                    );
+                    rewritten.push_str(&rewritten_func);
+                    rewritten.push_str("\n\n");
+                }
             }
-        }
-        
-
-
-        // 1. Remove texture bindings (they'll be replaced with atlas bindings)
-        // 2. Keep sampler bindings
-        // 3. Keep all other global declarations
-        for global in &shader.globals {
-            if shader.texture_references.contains_key(&global.var_name) {
-                // Skip texture bindings - they'll be replaced with atlas bindings
-                continue;
-            }
-            // Keep samplers and other bindings
-            rewritten.push_str(&global.full_text);
-            rewritten.push('\n');
-        }
-
-        rewritten.push('\n');
-
-        // 4. Add helper functions (but skip vs_main and fs_main)
-        for func in shader.helper_functions() {
-            rewritten.push_str(&Self::rewrite_function_body(
-                &func,
-                flags,
-                texture_index_map,
-                atlas_binding_map,
-            ));
-            rewritten.push_str("\n\n");
-        }
-
-        // 5. Rewrite entry points (vs_main, fs_main)
-        if let Some(vs) = &shader.vertex_entry {
-            rewritten.push_str(&Self::rewrite_function_body(
-                &vs,
-                flags,
-                texture_index_map,
-                atlas_binding_map,
-            ));
-            rewritten.push_str("\n\n");
-        }
-
-        if let Some(fs) = &shader.fragment_entry {
-            rewritten.push_str(&Self::rewrite_function_body(
-                &fs,
-                flags,
-                texture_index_map,
-                atlas_binding_map,
-            ));
-            rewritten.push_str("\n\n");
         }
 
         rewritten
@@ -150,7 +140,8 @@ impl ShaderRewriter {
         atlas_binding_map: &HashMap<u32, u32>,
     ) -> String {
         let name = &function.name;
-        let mut body = function.body.clone();
+        let max_body_size = function.body.len() + VERTEX_FUNCTION_VERTEX_INFO_WGSL.len() + VERTEX_FUNCTION_INSTANCE_INFO_WGSL.len();
+        let mut body = String::with_capacity(max_body_size);
         let return_type = match function.return_type.clone() {
             Some(dt) => dt,
             None => String::from("()")
@@ -161,7 +152,7 @@ impl ShaderRewriter {
             // Append vertex info code only if OVERRIDE_VERTEX_INPUT is not set
             if !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT) {
                 if let Some(param) = function.parameters.get("raw_vertex") {
-                    if param.data_type == "RawVertexInfo" {
+                    if param.data_type == "RawVertexInput" {
                         body.push_str("\n    ");
                         body.push_str(VERTEX_FUNCTION_VERTEX_INFO_WGSL.trim());
                     }
@@ -178,15 +169,23 @@ impl ShaderRewriter {
                 }
             }
         }
+        body.push_str(&function.body);
 
         // Get the parameters and make sure they are in the correct order
         let mut parameters: Vec<Parameter> = function.parameters.values().cloned().collect();
         parameters.sort_by_key(|p| p.position);
-        
+
         // render out the parameters
         let parameters = Self::rewrite_function_parameters(&parameters);
 
-        let mut result = format!("fn {} ({}) -> {} {{{}}}", name, parameters, return_type, body);
+        // Include attributes (like @vertex, @fragment) if present
+        let attributes_prefix = if function.attributes.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", function.attributes)
+        };
+
+        let mut result = format!("{}fn {} ({}) -> {} {{{}}}", attributes_prefix, name, parameters, return_type, body);
 
         // Replace textureSample(texture_name, sampler, uv) with textureSample#(atlas_N, sampler, uv)
         for (tex_name, &tex_index) in texture_index_map {

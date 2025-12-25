@@ -84,18 +84,20 @@ impl ShaderMerger {
         let mut merged = String::new();
 
         for shader in shaders {
-            for global in &shader.globals {
-                // Skip texture bindings (we have atlases instead)
-                if shader.texture_references.contains_key(&global.var_name) {
-                    continue;
-                }
+            for decl in &shader.declarations {
+                if let crate::shader_parser::Declaration::Global(global) = decl {
+                    // Skip texture bindings (we have atlases instead)
+                    if shader.texture_references.contains_key(&global.var_name) {
+                        continue;
+                    }
 
-                // Deduplicate based on group, binding, and type
-                let key = format!("{}:{}:{}", global.group, global.binding, global.var_type);
-                if !seen_globals.contains(&key) {
-                    seen_globals.insert(key);
-                    merged.push_str(&global.full_text);
-                    merged.push('\n');
+                    // Deduplicate based on group, binding, and type
+                    let key = format!("{}:{}:{}", global.group, global.binding, global.var_type);
+                    if !seen_globals.contains(&key) {
+                        seen_globals.insert(key);
+                        merged.push_str(&global.full_text);
+                        merged.push('\n');
+                    }
                 }
             }
         }

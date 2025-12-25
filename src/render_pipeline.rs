@@ -2,9 +2,12 @@ use crate::coordination::TextureRemapping;
 use crate::model::ModelBufferStruct;
 use crate::render_target::RenderTarget;
 use crate::sampler::Sampler;
+use crate::shader_parser::ParsedShader;
+use crate::shader_rewriter::ShaderRewriter;
 use crate::texture::Texture;
 use bitflags::bitflags;
 use bytemuck::offset_of;
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::{Arc, Weak};
 use wgpu::MultisampleState;
@@ -20,7 +23,7 @@ bitflags! {
     pub struct RenderPipelineFlags: u32 {
         const ALLOW_WORLD_UNIFORM = 1;
         const ALLOW_CAMERA_UNIFORM = 2;
-        const ALLOW_OBJECT_UNIFORM = 7; // We want to force world and camera uniforms if we're rendering objects
+        const ALLOW_OBJECT_UNIFORM = 4; 
 
         const OVERRIDE_VERTEX_INPUT = 8;
     }
@@ -59,15 +62,39 @@ impl RenderPipeline {
     pub fn new(
         device: &wgpu::Device,
         render_target: &dyn RenderTarget,
+        bind_group_layout: &BindGroupLayout,
         source: &str,
         textures: &[Texture],
         sampler: Option<Sampler>,
         remappings: Vec<TextureRemapping>,
         flags: RenderPipelineFlags,
     ) -> Self {
+        // Parse the shader
+        let parsed_shader = ParsedShader::parse(source);
 
-        // Apply binding remapping to shader source
-        let mut shader = source.to_string();
+        // Build texture index map (texture_name -> global_texture_index)
+        let mut texture_index_map = HashMap::new();
+        for (tex_name, _) in &parsed_shader.texture_references {
+            // For now, map each texture to its own index
+            // This assumes texture order matches usage order
+            let index = texture_index_map.len() as u32;
+            texture_index_map.insert(tex_name.clone(), index);
+        }
+
+        // Build atlas binding map (global_texture_index -> atlas_binding_index)
+        // For single-texture pipelines, all textures map to atlas 0
+        let mut atlas_binding_map = HashMap::new();
+        for i in 0..textures.len() {
+            atlas_binding_map.insert(i as u32, 0);
+        }
+
+        // Rewrite the shader using the shader rewriter
+        let mut shader = ShaderRewriter::rewrite_shader(
+            &parsed_shader,
+            flags,
+            &texture_index_map,
+            &atlas_binding_map,
+        );
 
         // Generate textureSample functions for each remapped texture
         let mut generated_functions = String::new();
@@ -99,20 +126,11 @@ impl RenderPipeline {
         // Prepend generated functions to the shader source
         let shader = format!("{}{}", generated_functions, shader);
 
-        
-
-
         // Get the flag info (about the uniform buffers)
-        let allow_world_uniform = flags.contains(RenderPipelineFlags::ALLOW_WORLD_UNIFORM);
-        let allow_camera_uniform = flags.contains(RenderPipelineFlags::ALLOW_CAMERA_UNIFORM);
         let allow_object_uniform = flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM);
 
         // Create the uniform bind group layout.
-        let uniform_bind_group_layout = Self::create_uniform_bind_group_layout(
-            device,
-            allow_world_uniform,
-            allow_camera_uniform,
-        );
+        let uniform_bind_group_layout = bind_group_layout.clone();
 
         // Create the texture bind group layout.
         let texture_bind_group_layout =
@@ -178,7 +196,10 @@ impl RenderPipeline {
                 entry_point: Some("fs_main"),
                 targets: color_target_states.as_ref(),
             }),
-            primitive: PrimitiveState::default(),
+            primitive: PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
             depth_stencil: depth_target_state,
             multisample: MultisampleState::default(),
             multiview: None,
@@ -271,42 +292,6 @@ impl RenderPipeline {
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &texture_bind_group_layout_entries,
-        })
-    }
-
-    fn create_uniform_bind_group_layout(
-        device: &Device,
-        allow_world_uniform: bool,
-        allow_camera_uniform: bool,
-    ) -> BindGroupLayout {
-        let mut uniform_bind_group_layout_entries = Vec::new();
-        if allow_world_uniform {
-            uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                count: None,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-            });
-        }
-        if allow_camera_uniform {
-            uniform_bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                count: None,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-            });
-        }
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &uniform_bind_group_layout_entries,
         })
     }
 

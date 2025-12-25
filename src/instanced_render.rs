@@ -112,6 +112,7 @@ impl InstancedRender {
         let pipeline = RenderPipeline::new(
             &r_inner.device,
             &r_inner.camera,
+            &r_inner.camera_bind_group_layout,
             &shader,
             &atlases,
             sampler,
@@ -173,6 +174,7 @@ impl InstancedRender {
         let new_pipeline = RenderPipeline::new(
             &r_inner.device,
             &r_inner.camera,
+            &r_inner.camera_bind_group_layout,
             &merged_shader,
             &atlases,
             sampler,
