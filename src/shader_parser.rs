@@ -209,8 +209,12 @@ impl ParsedShader {
                 // Create a slice to find the return type
                 let return_type = if let Some(return_token_pos) = source[start_pos..].find('>') {
                     let return_start = return_token_pos + start_pos + 1;
-                    let unfiltered = String::from(&source[return_start..body_start]);
-                    Some(unfiltered.chars().filter(|c| c.ne(&' ')).collect())
+                    if return_start <= body_start {
+                        let unfiltered = String::from(&source[return_start..body_start]);
+                        Some(unfiltered.chars().filter(|c| c.ne(&' ')).collect())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };

@@ -223,6 +223,11 @@ mod tests {
 @group(1) @binding(0) var my_texture: texture_2d<f32>;
 @group(1) @binding(1) var my_sampler: sampler;
 
+@vertex
+fn vs_main() {
+    return vec4<f32>(vertex.position, 1.0);
+}
+
 @fragment
 fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     return textureSample(my_texture, my_sampler, uv);

@@ -211,10 +211,10 @@ mod tests {
             shader,
             &textures,
             Some(sampler),
-            RenderPipelineFlags::empty(),
+            RenderPipelineFlags::OVERRIDE_VERTEX_INPUT,
         );
 
-        let vertices = [[0.5, 0.5, 0.0], [-0.5, 0.5, 0.0], [-0.0, -0.5, 0.0]];
+        let vertices = [[0.0f32; 16]; 3];
         let vertices = vertices
             .iter()
             .flat_map(|v| v.iter())
@@ -276,7 +276,7 @@ mod tests {
             shader,
             &vec![texture],
             Some(sampler),
-            RenderPipelineFlags::empty(),
+            RenderPipelineFlags::OVERRIDE_VERTEX_INPUT,
         );
 
         let vertices = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];

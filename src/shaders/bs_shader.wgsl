@@ -1,20 +1,19 @@
 // Vertex shader
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) tex_coord: vec2<f32>,
+    //@location(2) color: vec3<f32>,
+};
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
 };
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Define the three vertices of our triangle in clip space
-    var pos = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 0.5),    // Top-center
-        vec2<f32>(-0.5, -0.5),  // Bottom-left
-        vec2<f32>(0.5, -0.5)    // Bottom-right
-    );
-
+fn vs_main(vertex: VertexInput) -> VertexOutput {
     var output: VertexOutput;
-    output.position = vec4<f32>(pos[vertex_index], 0.0, 1.0);
+    output.position = vec4<f32>(vertex.position, 1.0);
     output.color = vec4<f32>(1.0, 1.0, 1.0, 1.0);  // White color
 
     return output;
