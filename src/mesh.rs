@@ -137,12 +137,12 @@ impl Mesh {
     /// Get the model's GPU buffer, if available
     ///
     /// Returns None if this mesh has no parent model or if the model has been dropped
-    pub fn model_buffer(&self) -> Option<Buffer> {
+    pub fn model_buffer(&self, variant: usize) -> Option<Buffer> {
         let lock = self.inner.lock().unwrap();
 
         if let Some(weak_model) = &lock.parent_model {
             if let Some(model_inner) = weak_model.0.upgrade() {
-                return Some(model_inner.model_buffer.clone());
+                return Some(model_inner.model_buffers[variant].clone());
             }
         }
 

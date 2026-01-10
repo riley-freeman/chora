@@ -1,5 +1,7 @@
 use std::fmt::{Debug, Display};
 
+use wgpu::PollError;
+
 #[derive(Debug)]
 pub enum ChoraError {
     FailedToFindAdapter{},
@@ -7,6 +9,8 @@ pub enum ChoraError {
     FailedToCreateSurface,
     NoSurfaceConfigured,
     FailedToAcquireSwapchainTexture,
+
+    SubmissionPollingError{err: PollError},
 }
 
 impl std::error::Error for ChoraError {}

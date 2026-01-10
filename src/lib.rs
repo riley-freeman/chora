@@ -1,5 +1,6 @@
 use crate::camera::{Camera, CameraBufferStruct};
 use crate::coordination::Transform;
+use crate::error::ChoraError;
 use crate::instanced_render::InstancedRender;
 use crate::linked_list::LinkedList;
 use crate::mesh::{Mesh, WeakMesh};
@@ -12,11 +13,12 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io;
-use std::ops::DerefMut;
+use std::mem::replace;
+use std::ops::{DerefMut, Sub};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, LazyLock, Mutex};
-use wgpu::BackendOptions;
+use wgpu::{BackendOptions, SubmissionIndex};
 use wgpu::Backends;
 use wgpu::Device;
 use wgpu::Instance;
@@ -52,6 +54,7 @@ mod shader_merger;
 pub mod texture;
 mod utils;
 
+const MAX_FRAMES_IN_FLIGHT: usize = 3;
 const MAX_TEXTURE_SIZE: u32 = 2048;
 const _MAX_BINDABLE_TEXTURE_COUNT: usize = 16;
 
@@ -87,6 +90,9 @@ struct RendererInner {
     // Swapchain support (optional)
     surface: Option<Surface<'static>>,
     surface_config: Option<SurfaceConfiguration>,
+
+    submission_indices: [Option<SubmissionIndex>; MAX_FRAMES_IN_FLIGHT],
+    submission_id: usize,
 
     // Final / Main output
     camera: Camera,
@@ -173,6 +179,9 @@ impl Renderer {
 
             surface: None,
             surface_config: None,
+
+            submission_indices: Default::default(),
+            submission_id: usize::MAX,
 
             mesh_collection: Default::default(),
 
@@ -341,6 +350,7 @@ impl Renderer {
             meshes,
             mutable,
             transform,
+            MAX_FRAMES_IN_FLIGHT,
         ))
     }
 
@@ -707,7 +717,17 @@ impl Renderer {
     }
 
     pub fn render(&self) -> Result<(), error::ChoraError> {
-        let this = self.0.lock().unwrap();
+        let mut this = self.0.lock().unwrap();
+        // Switch up the submission id (Keep in mind we start at usize::MAX and add one to get to zero)
+        this.submission_id = this.submission_id.wrapping_add(1) % MAX_FRAMES_IN_FLIGHT;
+
+        // Wait on a possible submission
+        let submission_id = this.submission_id;
+        let possible_submission = replace(&mut this.submission_indices[submission_id], None);
+        if let Some(submission) = possible_submission {
+            this.device.poll(wgpu::wgt::PollType::WaitForSubmissionIndex(submission))
+                .map_err(|e| ChoraError::SubmissionPollingError { err: e })?;
+        }
 
         // 1. Acquire the camera's current output texture view
         let camera = &this.camera;
@@ -768,8 +788,8 @@ impl Renderer {
                                 let mesh_lock = mesh_inner.lock().unwrap();
                                 render_pass.set_vertex_buffer(0, mesh_lock._vertex_buffer.slice(..));
                                 if let Some(model) = mesh_lock.get_parent_model() {
-                                    model.update_matrix_and_upload(&this.queue);
-                                    render_pass.set_vertex_buffer(1, model.model_buffer().slice(..))
+                                    model.update_matrix_and_upload(&this.queue, this.submission_id);
+                                    render_pass.set_vertex_buffer(1, model.model_buffer(this.submission_id).slice(..))
                                 }
                                 render_pass.set_index_buffer(mesh_lock._index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                                 
@@ -783,7 +803,8 @@ impl Renderer {
             }
         }
 
-        this.queue.submit(std::iter::once(encoder.finish()));
+        this.submission_indices[submission_id] = 
+            Some(this.queue.submit(std::iter::once(encoder.finish())));
 
         Ok(())
     }

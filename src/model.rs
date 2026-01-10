@@ -5,7 +5,8 @@ use wgpu::wgt::BufferDescriptor;
 use crate::coordination::Transform;
 use crate::mesh::{Mesh, WeakModel};
 
-use std::mem;
+use std::{mem, usize};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct ModelInner {
@@ -14,8 +15,9 @@ pub(crate) struct ModelInner {
 
     pub(crate) transform: *const Transform,
 
-    pub(crate) model_buffer: Buffer,
+    pub(crate) model_buffers: Vec<Buffer>,
     pub(crate) model_buffer_info: Mutex<ModelBufferStruct>,
+    pub(crate) model_buffer_update: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -40,15 +42,9 @@ impl Default for ModelBufferStruct {
 }
 
 impl Model {
-    pub fn new(device: &Device, queue: &Queue, meshes: Vec<Mesh>, mutable: bool, transform: &Transform) -> Self
+    pub fn new(device: &Device, queue: &Queue, meshes: Vec<Mesh>, mutable: bool, transform: &Transform, buffers: usize) -> Self
     {
-        // Create a buffer for the model's render data
-        let model_buffer = device.create_buffer(&BufferDescriptor {
-            size: mem::size_of::<ModelBufferStruct>() as _,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            label: Some("Model Buffer"),
-        });
+        
 
         let buffer_info = unsafe { ModelBufferStruct {
             model_matrix: Self::compute_matrix(
@@ -56,7 +52,19 @@ impl Model {
             )
         }};
         let model_buffer_info = Mutex::new(buffer_info);
-        queue.write_buffer(&model_buffer, 0, bytemuck::cast_slice(&[buffer_info]));
+
+        // Create a buffer for the model's render data
+        let mut model_buffers = vec![];
+        for i in 0..buffers {
+            let model_buffer = device.create_buffer(&BufferDescriptor {
+                size: mem::size_of::<ModelBufferStruct>() as _,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+                label: Some("Model Buffer"),
+            });
+            queue.write_buffer(&model_buffer, 0, bytemuck::cast_slice(&[buffer_info]));
+            model_buffers.push(model_buffer);
+        }
 
 
         let inner = ModelInner {
@@ -65,7 +73,8 @@ impl Model {
 
             transform: transform as _,
 
-            model_buffer,
+            model_buffers,
+            model_buffer_update: AtomicUsize::new(usize::MAX),
             model_buffer_info,
         };
 
@@ -108,35 +117,58 @@ impl Model {
     /// Update the model matrix from the current position/rotation/scale values
     ///
     /// Call this after modifying the position, rotation, or scale vectors
-    pub fn update_matrix(&self) {
+    pub fn update_matrix(&self) -> bool {
         unsafe {
             let transform = &*self.inner.transform;
             if transform.updated.load(std::sync::atomic::Ordering::Relaxed) == true {
                 let new_matrix = Self::compute_matrix(transform);
                 self.inner.model_buffer_info.lock().unwrap().model_matrix = new_matrix;
+                true // Data bas changed
+            } else {
+                false // Data has remained the same
             }
         }
     }
 
     /// Update the model matrix and upload it to the GPU buffer
+    /// 
+    /// Returns true if a buffer has updated.
     ///
     /// # Arguments
     /// * `queue` - The GPU queue for uploading data
-    pub fn update_matrix_and_upload(&self, queue: &Queue) {
-        self.update_matrix();
-        let matrix = self.model_matrix();
+    pub fn update_matrix_and_upload(&self, queue: &Queue, buffer: usize) -> bool {
+        let changed = self.update_matrix();
+        // You know... I really dont care about it not actually being atomic... at least not yet...
+        let old = self.inner.model_buffer_update.load(std::sync::atomic::Ordering::Relaxed);
+        if changed {
+            self.inner.model_buffer_update.store (
+                1 << buffer,
+                std::sync::atomic::Ordering::Relaxed
+            );
+        } else {
+            // Check if this buffer has already been updated
+            // if so, dont do any more work 
+            if old & (1 << buffer) != 0 {
+                return false;
+            }
 
+            self.inner.model_buffer_update.store (
+                old | 1 << buffer,
+                std::sync::atomic::Ordering::Relaxed
+            );
+        }
+
+        let matrix = self.model_matrix();
         let buffer_data = ModelBufferStruct {
             model_matrix: matrix,
         };
-
-        // Upload to GPU
-        queue.write_buffer(&self.inner.model_buffer, 0, bytemuck::cast_slice(&[buffer_data]));
+        queue.write_buffer(&self.inner.model_buffers[buffer], 0, bytemuck::cast_slice(&[buffer_data]));
+        true
     }
 
     /// Get a reference to the model's GPU buffer containing the model matrix
-    pub fn model_buffer(&self) -> &Buffer {
-        &self.inner.model_buffer
+    pub fn model_buffer(&self, variant: usize) -> &Buffer {
+        &self.inner.model_buffers[variant]
     }
 
     /// Get the meshes in this model
@@ -256,7 +288,7 @@ mod tests {
             assert_eq!(mesh_matrix.unwrap(), matrix, "Mesh matrix should match model matrix");
 
             // Verify mesh can access model buffer
-            let buffer = mesh.model_buffer();
+            let buffer = mesh.model_buffer(0);
             assert!(buffer.is_some(), "Mesh should have access to model buffer");
         }
 
