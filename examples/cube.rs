@@ -107,6 +107,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     renderer.add_to_render_queue(&model).unwrap();
 
     let mut scalar = 0.0f32;
+    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent {
@@ -120,7 +121,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 ..
             } => {
                 renderer.resize_surface(physical_size.width, physical_size.height).unwrap();
-                window.request_redraw();
             }
             Event::WindowEvent {
                 event: WindowEvent::RedrawRequested,
@@ -133,7 +133,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 println!("RENDER: {:?}", transform.rotation());
                 renderer.render().unwrap();
                 renderer.present().unwrap();
-                window.request_redraw();
             }
             Event::AboutToWait => {
                 window.request_redraw();
