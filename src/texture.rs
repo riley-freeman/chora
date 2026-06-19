@@ -13,8 +13,8 @@ use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::coordination::Rectangle;
 use crate::coordination::Point2D;
+use crate::coordination::Rectangle;
 use crate::linked_list::LinkedList;
 use crate::render_target::RenderTarget;
 use crate::{MAX_TEXTURE_SIZE, Renderer, RendererInner};
@@ -32,7 +32,6 @@ use wgpu::{
 pub(crate) struct TextureInner {
     texture: wgpu::Texture,
     view: TextureView,
-    _renderer: Renderer,
     bind_group: wgpu::BindGroup,
 }
 
@@ -100,7 +99,6 @@ impl Texture {
             texture: texture,
             bind_group,
             view,
-            _renderer: renderer,
         };
 
         Self {
@@ -139,7 +137,6 @@ impl Texture {
             bind_group,
             view,
             texture: texture,
-            _renderer: renderer,
         };
 
         Self {
@@ -362,15 +359,19 @@ impl Texture {
                 );
                 sender.send(save_result).unwrap();
             } else {
-                sender.send(Err(image::ImageError::IoError(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to map GPU buffer"
-                )))).unwrap();
+                sender
+                    .send(Err(image::ImageError::IoError(io::Error::new(
+                        io::ErrorKind::Other,
+                        "Failed to map GPU buffer",
+                    ))))
+                    .unwrap();
             }
         });
 
         device.poll(PollType::Wait).unwrap();
-        receiver.recv().unwrap()
+        receiver
+            .recv()
+            .unwrap()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         buffer.unmap();
 
@@ -496,10 +497,7 @@ impl Sprite {
         let max_x = self._scissor.max().x as f32 / atlas_width;
         let max_y = self._scissor.max().y as f32 / atlas_height;
 
-        Rectangle::new(
-            Point2D::new(min_x, min_y),
-            Point2D::new(max_x, max_y),
-        )
+        Rectangle::new(Point2D::new(min_x, min_y), Point2D::new(max_x, max_y))
     }
 
     /// Returns the atlas texture that contains this sprite
@@ -586,7 +584,9 @@ impl Spritesheet {
             &[Bucket::new(
                 MAX_TEXTURE_SIZE as _,
                 MAX_TEXTURE_SIZE as _,
-                0, 0, 1,
+                0,
+                0,
+                1,
             )],
         );
 
@@ -701,10 +701,10 @@ fn cast_texture_to_atlas(
         });
         r_pass.set_pipeline(&cast_render_pipeline);
         r_pass.set_bind_group(0, Some(&src.bind_group), &[]);
-        let x = rect.min().x    as u32;
-        let y = rect.min().y    as u32;
-        let w = rect.width()    as u32;
-        let h = rect.height()   as u32;
+        let x = rect.min().x as u32;
+        let y = rect.min().y as u32;
+        let w = rect.width() as u32;
+        let h = rect.height() as u32;
         r_pass.set_scissor_rect(x, y, w, h);
         r_pass.set_viewport(x as _, y as _, w as _, h as _, 0.0, 1.0);
         r_pass.draw(0..3, 0..1);
@@ -829,7 +829,7 @@ mod tests {
         }
     }
 
-fn _format_to_color_type(format: TextureFormat) -> ColorType {
-    Texture::format_to_color_type(format)
-}
+    fn _format_to_color_type(format: TextureFormat) -> ColorType {
+        Texture::format_to_color_type(format)
+    }
 }

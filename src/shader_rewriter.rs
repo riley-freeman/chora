@@ -86,7 +86,14 @@ impl ShaderRewriter {
         for decl in &shader.declarations {
             match decl {
                 crate::shader_parser::Declaration::Struct(s) => {
-                    // Always keep struct declarations
+                    // Skip structs that the rewriter is replacing with standard definitions.
+                    let replaced_by_vertex = !flags.contains(RenderPipelineFlags::OVERRIDE_VERTEX_INPUT)
+                        && (s._name == "VertexInput" || s._name == "RawVertexInput");
+                    let replaced_by_instance = flags.contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM)
+                        && (s._name == "InstanceInput" || s._name == "RawInstanceInput");
+                    if replaced_by_vertex || replaced_by_instance {
+                        continue;
+                    }
                     rewritten.push_str(&s.full_text);
                     rewritten.push_str("\n\n");
                 }

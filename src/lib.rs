@@ -13,12 +13,11 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io;
-use std::mem::replace;
-use std::ops::{DerefMut, Sub};
+use std::mem::{self, replace};
+use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, LazyLock, Mutex};
-use wgpu::{BackendOptions, SubmissionIndex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use wgpu::Backends;
 use wgpu::Device;
 use wgpu::Instance;
@@ -31,12 +30,13 @@ use wgpu::wgt::TextureFormat;
 use wgpu::wgt::{DeviceDescriptor, SamplerDescriptor};
 use wgpu::{
     Adapter, AddressMode, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingType, ColorTargetState, ColorWrites, FilterMode, FragmentState,
-    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode,
-    PrimitiveState, RenderPipelineDescriptor, SamplerBindingType, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, Surface, SurfaceConfiguration, TextureSampleType,
-    TextureViewDimension, VertexState,
+    BindingType, ColorTargetState, ColorWrites, FilterMode, FragmentState, MultisampleState,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, PrimitiveState,
+    RenderPipelineDescriptor, SamplerBindingType, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, Surface, SurfaceConfiguration, TextureSampleType, TextureViewDimension,
+    VertexState,
 };
+use wgpu::{BackendOptions, SubmissionIndex};
 
 pub mod camera;
 pub mod coordination;
@@ -48,9 +48,9 @@ pub mod model;
 pub mod render_pipeline;
 pub mod render_target;
 pub mod sampler;
+mod shader_merger;
 mod shader_parser;
 mod shader_rewriter;
-mod shader_merger;
 pub mod texture;
 mod utils;
 
@@ -82,7 +82,10 @@ struct RendererInner {
     buffers: usize,
 
     cast_bind_group_layout: BindGroupLayout,
+    // Offscreen blit pipeline — always Rgba8Unorm, used by the atlas/spritesheet.
     cast_render_pipeline: wgpu::RenderPipeline,
+    // Surface blit pipeline — matches swapchain format; set after create_surface().
+    cast_render_pipeline_surface: Option<wgpu::RenderPipeline>,
     cast_sampler: wgpu::Sampler,
 
     camera_bind_group_layout: BindGroupLayout,
@@ -111,10 +114,11 @@ struct RendererInner {
 unsafe impl Sync for RendererInner {}
 unsafe impl Send for RendererInner {}
 
-impl RendererInner {}
-
 #[derive(Clone)]
 pub struct Renderer(Arc<Mutex<RendererInner>>);
+
+#[derive(Clone)]
+pub struct WeakRenderer(Weak<Mutex<RendererInner>>);
 
 impl Renderer {
     pub fn new(width: u32, height: u32, buffers: usize) -> Result<Self, error::ChoraError> {
@@ -132,8 +136,11 @@ impl Renderer {
         // Create a bind group layout and render pipeline
         let cast_bind_group_layout = Self::create_cast_bind_group_layout(&device);
 
-        let cast_render_pipeline =
-            Self::create_cast_render_pipeline(&device, &cast_bind_group_layout, TextureFormat::Rgba8Unorm);
+        let cast_render_pipeline = Self::create_cast_render_pipeline(
+            &device,
+            &cast_bind_group_layout,
+            TextureFormat::Rgba8Unorm,
+        );
 
         let cast_sampler = device.create_sampler(&SamplerDescriptor::default());
 
@@ -173,6 +180,7 @@ impl Renderer {
 
             cast_bind_group_layout,
             cast_render_pipeline,
+            cast_render_pipeline_surface: None,
             cast_sampler,
 
             camera_bind_group_layout,
@@ -195,28 +203,33 @@ impl Renderer {
     }
 
     fn create_camera_bind_group_layout(device: &Device) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&BindGroupLayoutDescriptor { label: None, entries: &[
-            // BindGroupLayoutEntry {
-            //     binding: 0,
-            //     count: None,
-            //     ty: BindingType::Buffer {
-            //         ty: wgpu::BufferBindingType::Uniform,
-            //         has_dynamic_offset: false,
-            //         min_binding_size: None
-            //     },
-            //     visibility: ShaderStages::VERTEX,
-            // },
-            BindGroupLayoutEntry {
-                binding: 1,
-                count: None,
-                ty: BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: std::num::NonZeroU64::new(size_of::<CameraBufferStruct>() as u64),
+        device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                // BindGroupLayoutEntry {
+                //     binding: 0,
+                //     count: None,
+                //     ty: BindingType::Buffer {
+                //         ty: wgpu::BufferBindingType::Uniform,
+                //         has_dynamic_offset: false,
+                //         min_binding_size: None
+                //     },
+                //     visibility: ShaderStages::VERTEX,
+                // },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    count: None,
+                    ty: BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            size_of::<CameraBufferStruct>() as u64,
+                        ),
+                    },
+                    visibility: ShaderStages::VERTEX,
                 },
-                visibility: ShaderStages::VERTEX,
-            },
-        ]})
+            ],
+        })
     }
 
     fn create_cast_render_pipeline(
@@ -371,15 +384,10 @@ impl Renderer {
         )
     }
 
-    pub fn create_spritesheet(
-        &self,
-    ) -> Spritesheet {
+    pub fn create_spritesheet(&self) -> Spritesheet {
         let lock = self.0.lock().unwrap();
 
-        Spritesheet::new_lock(
-            self.clone(),
-            &lock
-        )
+        Spritesheet::new_lock(self.clone(), &lock)
     }
 
     pub fn load_texture_from_path(&self, path: &Path) -> io::Result<Texture> {
@@ -434,8 +442,8 @@ impl Renderer {
 
     pub fn add_to_render_queue(&mut self, model: &Model) -> Result<(), error::ChoraError> {
         for mesh in model.into_iter() {
-            self.add_mesh_to_render_queue(&mesh)?;
             mesh.added.store(true, Ordering::Relaxed);
+            self.add_mesh_to_render_queue(&mesh)?;
         }
         Ok(())
     }
@@ -468,13 +476,31 @@ impl Renderer {
             let instanced_render = this_mut
                 .mesh_instanced_renders
                 .entry(mesh_address)
-                .or_insert(InstancedRender::new(clone, &this, mesh));
-            instanced_render.add_mesh(&this, &mesh);
+                .or_insert(InstancedRender::new(
+                    clone,
+                    &this,
+                    mesh,
+                    MAX_FRAMES_IN_FLIGHT,
+                ));
 
-            // Double up mesh
             if mesh_collection_len == 2 {
+                // Transitioning from independent → instanced.
+                // mesh_collection is [new_mesh, old_mesh] after push_front.
+                // Add old_mesh first so it occupies instance slot 0.
+                let old_weak = this
+                    .mesh_collection
+                    .get(&mesh_address)
+                    .and_then(|mc| mc.iter().nth(1))
+                    .cloned();
+                if let Some(old_weak) = old_weak {
+                    if let Some(old_mesh) = old_weak.upgrade() {
+                        instanced_render.add_mesh(&this, &old_mesh);
+                    }
+                }
                 instanced_render.add_mesh(&this, &mesh);
                 this.independent_renders.remove(&mesh_address).unwrap();
+            } else {
+                instanced_render.add_mesh(&this, &mesh);
             }
         } else {
             // Create a single independent render.
@@ -494,12 +520,15 @@ impl Renderer {
 
         this.independent_renders.remove(&mesh_address);
         let mut create_independent_render = false;
-        if let Some(instanced_renders) = this.mesh_instanced_renders.get_mut(&mesh_address) {
-            instanced_renders.remove_mesh(mesh);
-            if instanced_renders.mesh_count() == 0 {
-                this.mesh_instanced_renders.remove(&mesh_address);
-                create_independent_render = true;
-            }
+        let should_remove = if let Some(ir) = this.mesh_instanced_renders.get(&mesh_address) {
+            ir.remove_mesh(mesh);
+            ir.mesh_count() == 0
+        } else {
+            false
+        };
+        if should_remove {
+            this.mesh_instanced_renders.remove(&mesh_address);
+            create_independent_render = true;
         }
 
         if create_independent_render {
@@ -552,8 +581,10 @@ impl Renderer {
         window: &(impl raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle),
     ) -> Result<(), error::ChoraError> {
         let surface = unsafe {
-            INSTANCE.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)
-                .map_err(|_| error::ChoraError::FailedToCreateSurface)?)
+            INSTANCE.create_surface_unsafe(
+                wgpu::SurfaceTargetUnsafe::from_window(window)
+                    .map_err(|_| error::ChoraError::FailedToCreateSurface)?,
+            )
         }
         .map_err(|_| error::ChoraError::FailedToCreateSurface)?;
 
@@ -583,12 +614,14 @@ impl Renderer {
 
         surface.configure(&this.device, &config);
 
-        // Recreate the cast render pipeline with the surface format to ensure format matching
-        this.cast_render_pipeline = Self::create_cast_render_pipeline(
+        // Build a surface-specific blit pipeline that matches the swapchain format.
+        // The offscreen cast_render_pipeline (Rgba8Unorm) is left untouched so that
+        // the atlas/spritesheet copy path always works regardless of swapchain format.
+        this.cast_render_pipeline_surface = Some(Self::create_cast_render_pipeline(
             &this.device,
             &this.cast_bind_group_layout,
             surface_format,
-        );
+        ));
 
         this.surface = Some(surface);
         this.surface_config = Some(config);
@@ -671,7 +704,11 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&this.cast_render_pipeline);
+            let surface_pipeline = this
+                .cast_render_pipeline_surface
+                .as_ref()
+                .unwrap_or(&this.cast_render_pipeline);
+            render_pass.set_pipeline(surface_pipeline);
             render_pass.set_bind_group(0, &bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
@@ -716,6 +753,20 @@ impl Renderer {
         Ok(())
     }
 
+    /// Drop the wgpu Surface while the window is still alive.
+    ///
+    /// Call this in a `LoopExiting` (or equivalent) handler before the window
+    /// is freed. The Surface holds a raw window handle internally; if it is
+    /// dropped after the window, the destructor fires on a dangling pointer and
+    /// causes a segfault. Calling this method detaches the surface early so the
+    /// rest of `RendererInner` can outlive the window safely.
+    pub fn drop_surface(&self) {
+        let mut this = self.0.lock().unwrap();
+        this.surface = None;
+        this.surface_config = None;
+        this.cast_render_pipeline_surface = None;
+    }
+
     pub fn render(&self) -> Result<(), error::ChoraError> {
         let mut this = self.0.lock().unwrap();
         // Switch up the submission id (Keep in mind we start at usize::MAX and add one to get to zero)
@@ -725,7 +776,8 @@ impl Renderer {
         let submission_id = this.submission_id;
         let possible_submission = replace(&mut this.submission_indices[submission_id], None);
         if let Some(submission) = possible_submission {
-            this.device.poll(wgpu::wgt::PollType::WaitForSubmissionIndex(submission))
+            this.device
+                .poll(wgpu::wgt::PollType::WaitForSubmissionIndex(submission))
                 .map_err(|e| ChoraError::SubmissionPollingError { err: e })?;
         }
 
@@ -741,6 +793,13 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
+        // Pre-pass: collect per-instance model matrices and upload to GPU instance buffers.
+        // Clone device/queue so we avoid simultaneous field borrows through MutexGuard.
+        let device = this.device.clone();
+        let queue = this.queue.clone();
+        let instanced_addrs: Vec<*const c_void> =
+            this.mesh_instanced_renders.keys().cloned().collect();
+        // Render pass is in its own scope so it drops before encoder.finish().
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -765,48 +824,124 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            // Iterate over mesh collections
             for (mesh_address, mesh_list) in &this.mesh_collection {
-                // Check if it's an instanced render or independent
-                if let Some(_instanced_render) = this.mesh_instanced_renders.get(mesh_address) {
-                    // TODO: Implement instanced rendering
-                    // For now, we can just iterate and draw individually if needed,
-                    // but ideally InstancedRender should handle this.
-                    // Since InstancedRender implementation is complex and I'm just fixing the basics:
-                    // I will skip this for the triangle test as it likely uses independent render.
+                if let Some(instanced_render) = this.mesh_instanced_renders.get(mesh_address) {
+                    if let Some(pipeline) = instanced_render.active_pipeline() {
+                        let pipeline_lock = pipeline.inner.lock().unwrap();
+                        let allow_object_uniform = pipeline
+                            .flags
+                            .contains(RenderPipelineFlags::ALLOW_OBJECT_UNIFORM);
+
+                        render_pass.set_pipeline(&pipeline_lock._render_pipeline);
+                        render_pass.set_bind_group(0, &camera_bindgroup, &[]);
+                        render_pass.set_bind_group(
+                            pipeline_lock.texture_bind_group_index,
+                            &pipeline_lock._texture_bind_group,
+                            &[],
+                        );
+
+                        // Flush per-instance model matrices before drawing.
+                        for weak_mesh in mesh_list.iter() {
+                            if let Some(model) = weak_mesh.model.as_ref().and_then(|wm| {
+                                let inner = wm.0.upgrade()?;
+                                Some(unsafe {
+                                    mem::transmute::<Arc<crate::model::ModelInner>, Model>(inner)
+                                })
+                            }) {
+                                model.update_matrix_and_upload(
+                                    &this.device,
+                                    &this.queue,
+                                    submission_id,
+                                );
+                            }
+                        }
+
+                        // All meshes in the group share the same vertex/index data.
+                        if let Some(first_weak) = mesh_list.iter().next() {
+                            if let Some(mesh_arc) = first_weak.upgrade() {
+                                let mesh_lock = mesh_arc.inner.lock().unwrap();
+                                render_pass
+                                    .set_vertex_buffer(0, mesh_lock._vertex_buffer.slice(..));
+
+                                if allow_object_uniform {
+                                    if let Some(ibuf) =
+                                        instanced_render.instance_buffer(submission_id)
+                                    {
+                                        render_pass.set_vertex_buffer(1, ibuf.slice(..));
+                                    }
+                                }
+                                render_pass.set_index_buffer(
+                                    mesh_lock._index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+
+                                let index_count = mesh_lock._index_buffer.size() as u32 / 4;
+                                let instance_count = instanced_render.mesh_count() as u32;
+                                render_pass.draw_indexed(0..index_count, 0, 0..instance_count);
+                            }
+                        }
+                    }
                 } else if let Some(weak_pipeline) = this.independent_renders.get(mesh_address) {
-                     if let Some(pipeline) = weak_pipeline.upgrade() {
+                    if let Some(pipeline) = weak_pipeline.upgrade() {
                         let pipeline_lock = pipeline.inner.lock().unwrap();
                         render_pass.set_pipeline(&pipeline_lock._render_pipeline);
                         render_pass.set_bind_group(0, &camera_bindgroup, &[]);
-                        render_pass.set_bind_group(pipeline_lock.texture_bind_group_index, &pipeline_lock._texture_bind_group, &[]);
+                        render_pass.set_bind_group(
+                            pipeline_lock.texture_bind_group_index,
+                            &pipeline_lock._texture_bind_group,
+                            &[],
+                        );
 
-                        // We need to access the mesh to get its buffers
-                        // Since we only have the address and a list of weak meshes...
                         for weak_mesh in mesh_list.iter() {
                             if let Some(mesh_inner) = weak_mesh.upgrade() {
-                                let mesh_lock = mesh_inner.lock().unwrap();
-                                render_pass.set_vertex_buffer(0, mesh_lock._vertex_buffer.slice(..));
-                                if let Some(model) = mesh_lock.get_parent_model() {
-                                    model.update_matrix_and_upload(&this.queue, this.submission_id);
-                                    render_pass.set_vertex_buffer(1, model.model_buffer(this.submission_id).slice(..))
+                                let mesh_lock = mesh_inner.inner.lock().unwrap();
+                                render_pass
+                                    .set_vertex_buffer(0, mesh_lock._vertex_buffer.slice(..));
+                                if let Some(model) = weak_mesh.model.as_ref().and_then(|wm| {
+                                    let inner = wm.0.upgrade()?;
+                                    Some(unsafe {
+                                        mem::transmute::<Arc<crate::model::ModelInner>, Model>(
+                                            inner,
+                                        )
+                                    })
+                                }) {
+                                    model.update_matrix_and_upload(
+                                        &this.device,
+                                        &this.queue,
+                                        this.submission_id,
+                                    );
+                                    render_pass.set_vertex_buffer(
+                                        1,
+                                        model.model_buffer(this.submission_id).slice(..),
+                                    );
                                 }
-                                render_pass.set_index_buffer(mesh_lock._index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                                
-                                // Calculate index count
+                                render_pass.set_index_buffer(
+                                    mesh_lock._index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
                                 let index_count = mesh_lock._index_buffer.size() as u32 / 4;
                                 render_pass.draw_indexed(0..index_count, 0, 0..1);
                             }
                         }
-                     }
+                    }
                 }
             }
-        }
+        } // render_pass drops here, releasing the borrow on encoder
 
-        this.submission_indices[submission_id] = 
+        this.submission_indices[submission_id] =
             Some(this.queue.submit(std::iter::once(encoder.finish())));
 
         Ok(())
+    }
+
+    pub fn downgrade(&self) -> WeakRenderer {
+        WeakRenderer(Arc::downgrade(&self.0))
+    }
+}
+
+impl WeakRenderer {
+    pub fn upgrade(&self) -> Option<Renderer> {
+        Weak::upgrade(&self.0).map(|r| Renderer(r))
     }
 }
 
@@ -846,8 +981,14 @@ mod tests {
 
         let sampler = renderer.create_sampler(AddressMode::Repeat, FilterMode::Linear);
 
-        let render_pipeline =
-            renderer.create_render_pipeline(shader, &textures, Some(sampler), RenderPipelineFlags::empty());
+        // bs_shader.wgsl defines its own VertexInput struct, so use OVERRIDE_VERTEX_INPUT
+        // to prevent the rewriter from injecting the incompatible RawVertexInput format.
+        let render_pipeline = renderer.create_render_pipeline(
+            shader,
+            &textures,
+            Some(sampler),
+            RenderPipelineFlags::OVERRIDE_VERTEX_INPUT,
+        );
 
         // Create test meshes
         let vertices = [[0.5, 0.5, 0.0], [-0.5, 0.5, 0.0], [-0.0, -0.5, 0.0]];
@@ -864,6 +1005,7 @@ mod tests {
         let i_triangle1 = Mesh {
             inner: Arc::clone(&i_triangle0.inner),
             added: AtomicBool::new(false),
+            parent_model: Mutex::new(None),
         };
 
         let s_triangle2 = renderer
@@ -1004,19 +1146,19 @@ fn fs_main() -> @location(0) vec4<f32> {
         // These map "virtual" texture indices (10, 20, 30) to the actual atlas texture at binding 0
         let remappings = vec![
             TextureRemapping::new(
-                10,  // Virtual texture 10
-                0,   // Maps to atlas at binding 0
-                Rectangle::new(Point2D::new(0.0, 0.0), Point2D::new(0.5, 0.5)),  // Top-left quadrant
+                10,                                                             // Virtual texture 10
+                0, // Maps to atlas at binding 0
+                Rectangle::new(Point2D::new(0.0, 0.0), Point2D::new(0.5, 0.5)), // Top-left quadrant
             ),
             TextureRemapping::new(
-                20,  // Virtual texture 20
-                0,   // Maps to same atlas at binding 0
-                Rectangle::new(Point2D::new(0.5, 0.0), Point2D::new(1.0, 0.5)),  // Top-right quadrant
+                20,                                                             // Virtual texture 20
+                0, // Maps to same atlas at binding 0
+                Rectangle::new(Point2D::new(0.5, 0.0), Point2D::new(1.0, 0.5)), // Top-right quadrant
             ),
             TextureRemapping::new(
-                30,  // Virtual texture 30
-                0,   // Maps to same atlas at binding 0
-                Rectangle::new(Point2D::new(0.0, 0.5), Point2D::new(0.5, 1.0)),  // Bottom-left quadrant
+                30,                                                             // Virtual texture 30
+                0, // Maps to same atlas at binding 0
+                Rectangle::new(Point2D::new(0.0, 0.5), Point2D::new(0.5, 1.0)), // Bottom-left quadrant
             ),
         ];
 

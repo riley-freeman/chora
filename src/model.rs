@@ -1,13 +1,14 @@
+use crate::coordination::Transform;
+use crate::instanced_render::WeakInstancedRender;
+use crate::mesh::{Mesh, WeakModel};
 use cgmath::{Matrix4, Quaternion, Rad, Rotation3, Vector3};
-use wgpu::{Buffer, BufferUsages, Queue};
 use wgpu::Device;
 use wgpu::wgt::BufferDescriptor;
-use crate::coordination::Transform;
-use crate::mesh::{Mesh, WeakModel};
+use wgpu::{Buffer, BufferUsages, Queue};
 
-use std::{mem, usize};
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
+use std::{mem, usize};
 
 pub(crate) struct ModelInner {
     pub(crate) mutable: bool,
@@ -18,17 +19,20 @@ pub(crate) struct ModelInner {
     pub(crate) model_buffers: Vec<Buffer>,
     pub(crate) model_buffer_info: Mutex<ModelBufferStruct>,
     pub(crate) model_buffer_update: AtomicUsize,
+
+    pub(crate) mesh_instanced_renders: Mutex<Vec<WeakInstancedRender>>,
+    pub(crate) mesh_buffer_offsets: Vec<AtomicUsize>,
 }
 
 #[derive(Clone)]
 pub struct Model {
-    inner: Arc<ModelInner>,
+    pub(crate) inner: Arc<ModelInner>,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ModelBufferStruct {
-    pub(crate) model_matrix: Matrix4<f32>
+    pub(crate) model_matrix: Matrix4<f32>,
 }
 
 // Safety: ModelBufferStruct is repr(C) and contains only Matrix4<f32> which is Pod
@@ -37,20 +41,26 @@ unsafe impl bytemuck::Zeroable for ModelBufferStruct {}
 
 impl Default for ModelBufferStruct {
     fn default() -> Self {
-        ModelBufferStruct { model_matrix: Matrix4::from_scale(1.0) }
+        ModelBufferStruct {
+            model_matrix: Matrix4::from_scale(1.0),
+        }
     }
 }
 
 impl Model {
-    pub fn new(device: &Device, queue: &Queue, meshes: Vec<Mesh>, mutable: bool, transform: &Transform, buffers: usize) -> Self
-    {
-        
-
-        let buffer_info = unsafe { ModelBufferStruct {
-            model_matrix: Self::compute_matrix(
-                &*(transform as *const Transform),
-            )
-        }};
+    pub fn new(
+        device: &Device,
+        queue: &Queue,
+        meshes: Vec<Mesh>,
+        mutable: bool,
+        transform: &Transform,
+        buffers: usize,
+    ) -> Self {
+        let buffer_info = unsafe {
+            ModelBufferStruct {
+                model_matrix: Self::compute_matrix(&*(transform as *const Transform)),
+            }
+        };
         let model_buffer_info = Mutex::new(buffer_info);
 
         // Create a buffer for the model's render data
@@ -66,6 +76,11 @@ impl Model {
             model_buffers.push(model_buffer);
         }
 
+        let buffer_offsets = meshes.iter().map(|_| AtomicUsize::new(0)).collect();
+        let instanced_renders = meshes
+            .iter()
+            .map(|_| WeakInstancedRender::default())
+            .collect();
 
         let inner = ModelInner {
             mutable,
@@ -76,6 +91,8 @@ impl Model {
             model_buffers,
             model_buffer_update: AtomicUsize::new(usize::MAX),
             model_buffer_info,
+            mesh_buffer_offsets: buffer_offsets,
+            mesh_instanced_renders: Mutex::new(instanced_renders),
         };
 
         let model = Self {
@@ -103,7 +120,9 @@ impl Model {
         let scale = transform.scale();
         let scale_matrix = Matrix4::from_nonuniform_scale(scale.x, scale.y, scale.z);
 
-        transform.updated.store(false, std::sync::atomic::Ordering::Relaxed);
+        transform
+            .updated
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Combine: translation * rotation * scale (TRS order)
         translation * rotation_matrix * scale_matrix
@@ -131,38 +150,54 @@ impl Model {
     }
 
     /// Update the model matrix and upload it to the GPU buffer
-    /// 
+    ///
     /// Returns true if a buffer has updated.
     ///
     /// # Arguments
     /// * `queue` - The GPU queue for uploading data
-    pub fn update_matrix_and_upload(&self, queue: &Queue, buffer: usize) -> bool {
+    pub fn update_matrix_and_upload(&self, device: &Device, queue: &Queue, buffer: usize) -> bool {
         let changed = self.update_matrix();
         // You know... I really dont care about it not actually being atomic... at least not yet...
-        let old = self.inner.model_buffer_update.load(std::sync::atomic::Ordering::Relaxed);
+        let old = self
+            .inner
+            .model_buffer_update
+            .load(std::sync::atomic::Ordering::Relaxed);
         if changed {
-            self.inner.model_buffer_update.store (
-                1 << buffer,
-                std::sync::atomic::Ordering::Relaxed
-            );
+            self.inner
+                .model_buffer_update
+                .store(1 << buffer, std::sync::atomic::Ordering::Relaxed);
         } else {
             // Check if this buffer has already been updated
-            // if so, dont do any more work 
+            // if so, dont do any more work
             if old & (1 << buffer) != 0 {
                 return false;
             }
 
-            self.inner.model_buffer_update.store (
-                old | 1 << buffer,
-                std::sync::atomic::Ordering::Relaxed
-            );
+            self.inner
+                .model_buffer_update
+                .store(old | 1 << buffer, std::sync::atomic::Ordering::Relaxed);
         }
 
         let matrix = self.model_matrix();
         let buffer_data = ModelBufferStruct {
             model_matrix: matrix,
         };
-        queue.write_buffer(&self.inner.model_buffers[buffer], 0, bytemuck::cast_slice(&[buffer_data]));
+
+        let ir_pairs: Vec<(crate::instanced_render::InstancedRender, usize)> = {
+            let ir_lock = self.inner.mesh_instanced_renders.lock().unwrap();
+            ir_lock.iter().zip(&self.inner.mesh_buffer_offsets).filter_map(|(ir, offset)| {
+                Some((ir.upgrade()?, offset.load(std::sync::atomic::Ordering::Relaxed)))
+            }).collect()
+        };
+        for (ir, instance_offset) in ir_pairs {
+            ir.update_instance_buffer(device, queue, buffer, instance_offset, &[matrix]);
+        }
+
+        queue.write_buffer(
+            &self.inner.model_buffers[buffer],
+            0,
+            bytemuck::cast_slice(&[buffer_data]),
+        );
         true
     }
 
@@ -179,6 +214,23 @@ impl Model {
     /// Check if this model is mutable (allows matrix updates)
     pub fn is_mutable(&self) -> bool {
         self.inner.mutable
+    }
+
+    /// Record which instanced render group owns mesh `mesh_index` and what slot it occupies.
+    pub(crate) fn set_instanced_render(
+        &self,
+        mesh_index: usize,
+        ir: crate::instanced_render::WeakInstancedRender,
+        instance_offset: usize,
+    ) {
+        if mesh_index < self.inner.mesh_buffer_offsets.len() {
+            self.inner.mesh_buffer_offsets[mesh_index]
+                .store(instance_offset, std::sync::atomic::Ordering::Relaxed);
+        }
+        let mut lock = self.inner.mesh_instanced_renders.lock().unwrap();
+        if mesh_index < lock.len() {
+            lock[mesh_index] = ir;
+        }
     }
 
     /// Create a weak reference to this model
@@ -224,9 +276,9 @@ mod tests {
     use crate::Renderer;
     use crate::render_pipeline::RenderPipelineFlags;
     use cgmath::Euler;
+    use std::path::Path;
     use wgpu::AddressMode;
     use wgpu::FilterMode;
-    use std::path::Path;
 
     #[test]
     fn test_model_matrix_computation() {
@@ -261,17 +313,15 @@ mod tests {
         // Create model with transformation
         let transform = Transform::new(
             Vector3::new(1.0, 2.0, 3.0),
-            Quaternion::from(Euler::new(Rad(0.0), Rad(std::f32::consts::PI / 4.0), Rad(0.0))),
+            Quaternion::from(Euler::new(
+                Rad(0.0),
+                Rad(std::f32::consts::PI / 4.0),
+                Rad(0.0),
+            )),
             Vector3::new(2.0, 2.0, 2.0),
         );
 
-        let model = renderer
-            .create_model(
-                vec![mesh],
-                true,
-                &transform
-            )
-            .unwrap();
+        let model = renderer.create_model(vec![mesh], true, &transform).unwrap();
 
         // Get the model matrix
         let matrix = model.model_matrix();
@@ -284,8 +334,15 @@ mod tests {
         // Verify mesh can access parent model's matrix
         for mesh in model.meshes() {
             let mesh_matrix = mesh.model_matrix();
-            assert!(mesh_matrix.is_some(), "Mesh should have access to model matrix");
-            assert_eq!(mesh_matrix.unwrap(), matrix, "Mesh matrix should match model matrix");
+            assert!(
+                mesh_matrix.is_some(),
+                "Mesh should have access to model matrix"
+            );
+            assert_eq!(
+                mesh_matrix.unwrap(),
+                matrix,
+                "Mesh matrix should match model matrix"
+            );
 
             // Verify mesh can access model buffer
             let buffer = mesh.model_buffer(0);
@@ -313,12 +370,12 @@ mod tests {
 
         let vertices = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
         let indices = [0, 1, 2];
-        let mesh = renderer.create_mesh(&vertices, &indices, render_pipeline).unwrap();
+        let mesh = renderer
+            .create_mesh(&vertices, &indices, render_pipeline)
+            .unwrap();
 
         let mut transform = Transform::default();
-        let model = renderer
-            .create_model(vec![mesh], true, &transform)
-            .unwrap();
+        let model = renderer.create_model(vec![mesh], true, &transform).unwrap();
 
         let initial_matrix = model.model_matrix();
 

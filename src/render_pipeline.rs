@@ -23,7 +23,7 @@ bitflags! {
     pub struct RenderPipelineFlags: u32 {
         const ALLOW_WORLD_UNIFORM = 1;
         const ALLOW_CAMERA_UNIFORM = 2;
-        const ALLOW_OBJECT_UNIFORM = 4; 
+        const ALLOW_OBJECT_UNIFORM = 4;
 
         const OVERRIDE_VERTEX_INPUT = 8;
     }
@@ -96,7 +96,7 @@ impl RenderPipeline {
             &atlas_binding_map,
         );
 
-        println!("SHADER: \n{}", shader);
+        // println!("SHADER: \n{}", shader);
 
         // Generate textureSample functions for each remapped texture
         // let mut generated_functions = String::new();
@@ -177,9 +177,13 @@ impl RenderPipeline {
         let per_instance_buffer_layout_attributes = create_per_instance_vertex_attributes();
         let per_vertex_buffer_layout_attributes = create_per_vertex_attributes();
 
-        vertex_state_buffers.push(create_per_vertex_buffer_layout(&per_vertex_buffer_layout_attributes));
+        vertex_state_buffers.push(create_per_vertex_buffer_layout(
+            &per_vertex_buffer_layout_attributes,
+        ));
         if allow_object_uniform {
-            vertex_state_buffers.push(create_per_instance_buffer_layout(&per_instance_buffer_layout_attributes));
+            vertex_state_buffers.push(create_per_instance_buffer_layout(
+                &per_instance_buffer_layout_attributes,
+            ));
         }
 
         let desc = RenderPipelineDescriptor {
@@ -225,7 +229,7 @@ impl RenderPipeline {
 
         Self {
             inner: Arc::new(Mutex::new(inner)),
-            flags
+            flags,
         }
     }
 
@@ -298,7 +302,10 @@ impl RenderPipeline {
     }
 
     pub fn downgrade(&self) -> WeakRenderPipeline {
-        WeakRenderPipeline{ inner: Arc::downgrade(&self.inner), flags: self.flags.clone() }
+        WeakRenderPipeline {
+            inner: Arc::downgrade(&self.inner),
+            flags: self.flags.clone(),
+        }
     }
 
     pub fn textures(&self) -> Vec<Texture> {
@@ -330,14 +337,12 @@ fn create_per_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
             offset: 0,
             format: wgpu::VertexFormat::Float32x3,
         },
-
         // Texture Coordinates
         wgpu::VertexAttribute {
             shader_location: 1,
             offset: 12,
             format: wgpu::VertexFormat::Float32x2,
         },
-
         // // Color
         // wgpu::VertexAttribute {
         //     shader_location: 2,
@@ -347,8 +352,9 @@ fn create_per_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
     ]
 }
 
-
-fn create_per_vertex_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
+fn create_per_vertex_buffer_layout(
+    attributes: &[wgpu::VertexAttribute],
+) -> wgpu::VertexBufferLayout<'_> {
     wgpu::VertexBufferLayout {
         array_stride: 20,
         // array_stride: 24,
@@ -366,7 +372,7 @@ fn create_per_instance_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
         },
         wgpu::VertexAttribute {
             shader_location: 5,
-            offset: (offset_of!(ModelBufferStruct, model_matrix) + 16) as _, 
+            offset: (offset_of!(ModelBufferStruct, model_matrix) + 16) as _,
             format: wgpu::VertexFormat::Float32x4,
         },
         wgpu::VertexAttribute {
@@ -382,7 +388,9 @@ fn create_per_instance_vertex_attributes() -> Vec<wgpu::VertexAttribute> {
     ]
 }
 
-fn create_per_instance_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
+fn create_per_instance_buffer_layout(
+    attributes: &[wgpu::VertexAttribute],
+) -> wgpu::VertexBufferLayout<'_> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<ModelBufferStruct>() as _,
         step_mode: wgpu::VertexStepMode::Instance,
@@ -392,9 +400,9 @@ fn create_per_instance_buffer_layout(attributes: &[wgpu::VertexAttribute]) -> wg
 
 impl WeakRenderPipeline {
     pub fn upgrade(&self) -> Option<RenderPipeline> {
-        self.inner
-            .upgrade()
-            .map(|inner| 
-                RenderPipeline { inner, flags: self.flags.clone() })
+        self.inner.upgrade().map(|inner| RenderPipeline {
+            inner,
+            flags: self.flags.clone(),
+        })
     }
 }
